@@ -1,3 +1,16 @@
+# SwiftPM and app build output
+/.build/
+/dist/
+/.swiftpm/
+*.xcodeproj/
+# The C research CLI and probe binaries
 /glim
+/tools/macos-probe/displayprobe
+/tools/macos-probe/edidprobe
+/tools/macos-probe/audioprobe
+/tools/macos-probe/camprobe
+/tools/macos-probe/usbdescprobe
+/tools/macos-probe/hidprobe
+/tools/macos-probe/hpvolume
 *.o
 .DS_Store

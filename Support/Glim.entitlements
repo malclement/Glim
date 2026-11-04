@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Glim runs with the Hardened Runtime and no entitlements.
+
+  No App Sandbox: DDC/CI goes through the IOAVService user client
+  (DCPAVServiceProxyUserClient), which a sandboxed app cannot open, and Glim
+  is distributed outside the Mac App Store. Volume uses CoreAudio output
+  properties, which need no entitlement. Glim never records audio, so it has no
+  microphone usage description either.
+-->
+<plist version="1.0">
+<dict/>
+</plist>
