@@ -30,7 +30,8 @@ public struct MonitorProfile: Sendable, Equatable {
     public var volume: VolumeRoute?
     /// The inputs offered, or nil to offer none.
     public var inputs: [InputOption]?
-    /// How to turn DDC/CI back on when the monitor stops answering.
+    /// What to check when the monitor stops answering, phrased as a
+    /// condition: DDC/CI being off is one cause among several.
     public var ddcHelp: String
 
     public init(id: String, isVerified: Bool, brightness: Bool, contrast: Bool,
@@ -77,7 +78,7 @@ public struct MonitorProfile: Sendable, Equatable {
             InputOption(value: 0x11, name: "HDMI"),
             InputOption(value: 0x13, name: "USB-C"),
         ],
-        ddcHelp: "Turn DDC/CI back on in the monitor's menu: Management › DDC/CI."
+        ddcHelp: "If DDC/CI is off, turn it on in the monitor's menu under Management › DDC/CI."
     )
 
     /// A monitor Glim has no profile for. Controls come from its
@@ -94,7 +95,7 @@ public struct MonitorProfile: Sendable, Equatable {
             volume: capabilities?.lists(.audioVolume) == true ? .ddc : nil,
             // A single listed input is no choice at all.
             inputs: (inputs?.count ?? 0) >= 2 ? inputs : nil,
-            ddcHelp: "Check that DDC/CI is turned on in the monitor's own menu."
+            ddcHelp: "If DDC/CI is off, turn it on in the display's own menu."
         )
     }
 }

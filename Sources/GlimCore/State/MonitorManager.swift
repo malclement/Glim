@@ -159,6 +159,16 @@ public final class MonitorManager {
         }
     }
 
+    // MARK: Presentation
+
+    /// The monitor's name, numbered when another connected monitor has the
+    /// same one, in display-pipe order: "HP E27m G4 (1)", "HP E27m G4 (2)".
+    public func title(for monitor: Monitor) -> String {
+        let namesakes = monitors.filter { $0.name == monitor.name }
+        guard namesakes.count > 1, let index = namesakes.firstIndex(where: { $0 === monitor }) else { return monitor.name }
+        return "\(monitor.name) (\(index + 1))"
+    }
+
     // MARK: Refresh
 
     /// Re-reads every monitor, unless it was read in the last two seconds.

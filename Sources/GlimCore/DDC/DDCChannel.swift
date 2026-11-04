@@ -2,17 +2,20 @@ import Foundation
 
 /// A display that speaks DDC/CI. ``DDCChannel`` is the real one; tests supply
 /// their own.
+///
+/// The requirements are `async` so a test double can suspend; ``DDCChannel``
+/// satisfies them with blocking implementations on its own queue.
 public protocol DDCDevice: Actor {
     /// Reads one VCP code. Throws ``DDCError/unsupported(_:)`` if the display
     /// says it has no such control.
-    func read(_ code: VCPCode) throws -> VCPReading
+    func read(_ code: VCPCode) async throws -> VCPReading
     /// Writes one VCP code. DDC/CI has no acknowledgement for a write, so
     /// success means the frame was accepted by the bus, not that the display
     /// applied it; read the code back to know.
-    func write(_ code: VCPCode, value: UInt16) throws
+    func write(_ code: VCPCode, value: UInt16) async throws
     /// Reads one fragment of the capabilities string. An empty fragment marks
     /// its end.
-    func capabilitiesFragment(at offset: UInt16) throws -> [UInt8]
+    func capabilitiesFragment(at offset: UInt16) async throws -> [UInt8]
 }
 
 /// Timing rules for a DDC/CI conversation. The defaults are the values

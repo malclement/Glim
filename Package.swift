@@ -23,11 +23,23 @@ let package = Package(
             dependencies: ["GlimCore"],
             path: "Sources/Glim"
         ),
+        // Simulated displays and mocks shared by the test targets.
+        .target(
+            name: "GlimTestSupport",
+            dependencies: ["GlimCore"],
+            path: "Tests/GlimTestSupport"
+        ),
         .testTarget(
             name: "GlimCoreTests",
-            dependencies: ["GlimCore"],
+            dependencies: ["GlimCore", "GlimTestSupport"],
             path: "Tests/GlimCoreTests",
             resources: [.copy("Fixtures")]
+        ),
+        // Renders the app's views against simulated monitors.
+        .testTarget(
+            name: "GlimAppTests",
+            dependencies: ["Glim", "GlimCore", "GlimTestSupport"],
+            path: "Tests/GlimAppTests"
         ),
     ],
     swiftLanguageModes: [.v6]
