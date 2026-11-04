@@ -75,9 +75,7 @@ struct DisplaysSettingsView: View {
             ForEach(manager.monitors) { monitor in
                 Section(manager.title(for: monitor)) {
                     LabeledContent("Status", value: statusText(monitor.status))
-                    LabeledContent("Profile", value: monitor.profile.isVerified
-                        ? "Tested with Glim"
-                        : "Untested: controls from the display's own description")
+                    LabeledContent("Profile", value: profileText(monitor.profile))
                     if let identity = monitor.identity {
                         LabeledContent("EDID", value: "\(identity.manufacturerCode) \(String(identity.productID, radix: 16, uppercase: true))")
                     }
@@ -100,6 +98,11 @@ struct DisplaysSettingsView: View {
         }
         .formStyle(.grouped)
         .frame(height: 290)
+    }
+
+    private func profileText(_ profile: MonitorProfile) -> String {
+        guard profile.isTested else { return "Untested: controls from the display's own description" }
+        return profile.isTested(.input) ? "Tested with Glim" : "Tested with Glim, except input switching"
     }
 
     private func statusText(_ status: Monitor.Status) -> String {

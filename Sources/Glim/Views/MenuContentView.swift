@@ -19,8 +19,13 @@ struct MenuContentView: View {
         .frame(width: 300)
         // The window is reused between openings; reading the monitors each
         // time it opens is what keeps it current without polling.
-        .onWindowBecomesKey {
-            Task { await manager.refresh() }
+        .onWindowKeyChange { isKey in
+            // No drag can be in progress as the menu opens or closes, and a
+            // switch left unconfirmed must not survive it closing.
+            for monitor in manager.monitors { monitor.endInteractions() }
+            if isKey {
+                Task { await manager.refresh() }
+            }
         }
     }
 

@@ -2,16 +2,17 @@ import AppKit
 import SwiftUI
 
 extension View {
-    /// Runs `action` each time the window holding this view becomes key.
-    /// For a menu bar window that is each time it opens, which `onAppear`
-    /// does not reliably report, because the window is reused.
-    func onWindowBecomesKey(_ action: @escaping @MainActor () -> Void) -> some View {
+    /// Runs `action(true)` each time the window holding this view becomes
+    /// key and `action(false)` when it stops being key. For a menu bar window
+    /// that is each time it opens and closes, which `onAppear` does not
+    /// reliably report, because the window is reused.
+    func onWindowKeyChange(_ action: @escaping @MainActor (Bool) -> Void) -> some View {
         background(WindowKeyObserver(action: action))
     }
 }
 
 private struct WindowKeyObserver: NSViewRepresentable {
-    let action: @MainActor () -> Void
+    let action: @MainActor (Bool) -> Void
 
     func makeNSView(context: Context) -> ObserverView {
         let view = ObserverView()
@@ -24,20 +25,20 @@ private struct WindowKeyObserver: NSViewRepresentable {
     }
 
     final class ObserverView: NSView {
-        var action: (@MainActor () -> Void)?
-        private var observer: NSObjectProtocol?
+        var action: (@MainActor (Bool) -> Void)?
+        private var observers: [NSObjectProtocol] = []
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if let observer { NotificationCenter.default.removeObserver(observer) }
-            observer = nil
+            observers.forEach { NotificationCenter.default.removeObserver($0) }
+            observers.removeAll()
             guard let window else { return }
-            observer = NotificationCenter.default.addObserver(
-                forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.action?() }
+            for (name, isKey) in [(NSWindow.didBecomeKeyNotification, true), (NSWindow.didResignKeyNotification, false)] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.action?(isKey) }
+                })
             }
-            if window.isKeyWindow { action?() }
+            if window.isKeyWindow { action?(true) }
         }
     }
 }

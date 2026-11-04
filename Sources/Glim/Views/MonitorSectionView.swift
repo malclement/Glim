@@ -15,6 +15,10 @@ struct MonitorSectionView: View {
             switch monitor.status {
             case .notResponding:
                 NotRespondingView(monitor: monitor)
+                // The USB speakers are their own device and keep working.
+                if showVolume, monitor.hasUSBSpeakers, let volume = monitor.volume {
+                    VolumeRow(volume: volume, mute: monitor.mute)
+                }
             case .connecting, .ready:
                 controls
             }
@@ -32,7 +36,7 @@ struct MonitorSectionView: View {
                     .accessibilityLabel("Connecting")
             }
             Spacer(minLength: 0)
-            if !monitor.profile.isVerified {
+            if !monitor.profile.isTested {
                 Image(systemName: "info.circle")
                     .foregroundStyle(.secondary)
                     .help("Glim hasn't been tested with this display. Its controls come from the display's own description.")
@@ -43,6 +47,11 @@ struct MonitorSectionView: View {
 
     @ViewBuilder
     private var controls: some View {
+        if monitor.status == .ready, !monitor.hasControls {
+            Text("This display doesn't offer any control Glim supports.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
         if let brightness = monitor.brightness {
             LevelRow(title: "Brightness", control: brightness) {
                 Image(systemName: "sun.max")
@@ -57,7 +66,7 @@ struct MonitorSectionView: View {
             VolumeRow(volume: volume, mute: monitor.mute)
         }
         if showInput, let input = monitor.input {
-            InputRow(selector: input)
+            InputRow(selector: input, isTested: monitor.profile.isTested(.input))
         }
     }
 }
