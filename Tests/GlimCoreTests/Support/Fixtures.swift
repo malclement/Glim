@@ -1,5 +1,6 @@
 import Foundation
 @testable import GlimCore
+import GlimTestSupport
 
 enum Fixtures {
     static func text(_ name: String) throws -> String {
@@ -41,11 +42,7 @@ enum Fixtures {
         hex.split(separator: " ").compactMap { UInt8($0, radix: 16) }
     }
 
-    /// The HP E27m G4 as macOS describes it, with a made-up serial.
-    static let hpIdentity = DisplayIdentity(
-        vendorID: 0x220E, productID: 0x3753, serialNumber: 0x0101_0101,
-        alphanumericSerial: "TEST0000001", productName: "HP E27m G4"
-    )
+    static let hpIdentity = TestIdentity.hp
 }
 
 enum FixtureError: Error {

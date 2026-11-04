@@ -1,4 +1,5 @@
 @testable import GlimCore
+import GlimTestSupport
 import Testing
 
 /// How a control turns user intent into device writes, and device reads

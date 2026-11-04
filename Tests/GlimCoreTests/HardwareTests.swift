@@ -1,6 +1,7 @@
 import CoreAudio
 import Foundation
 @testable import GlimCore
+import GlimTestSupport
 import Testing
 
 /// Tests against a real HP E27m G4. Off unless `GLIM_HARDWARE_TESTS=1`

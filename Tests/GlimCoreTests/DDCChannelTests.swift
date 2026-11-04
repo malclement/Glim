@@ -1,4 +1,5 @@
 @testable import GlimCore
+import GlimTestSupport
 import Testing
 
 /// The channel against a byte-level simulated display.

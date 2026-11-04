@@ -1,50 +1,55 @@
 import os
-@testable import GlimCore
+import GlimCore
 
 /// A DDC/CI display simulated at the byte level. It checks every frame's
 /// checksum and answers the way the HP E27m G4 does, and it can misbehave on
 /// demand the way the real transport does (shifted reads, dropped writes).
-final class SimulatedDisplay: Sendable {
-    struct Value {
-        var current: UInt16
-        var maximum: UInt16
+package final class SimulatedDisplay: Sendable {
+    package struct Value {
+        package var current: UInt16
+        package var maximum: UInt16
+
+        package init(current: UInt16, maximum: UInt16) {
+            self.current = current
+            self.maximum = maximum
+        }
     }
 
-    struct State {
-        var values: [UInt8: Value] = [:]
-        var capabilities: [UInt8] = []
+    package struct State {
+        package var values: [UInt8: Value] = [:]
+        package var capabilities: [UInt8] = []
         /// Codes that accept writes and ignore them, like the HP's 0x62.
-        var ignoresWrites: Set<UInt8> = []
-        var reply: [UInt8]?
+        package var ignoresWrites: Set<UInt8> = []
+        package var reply: [UInt8]?
         /// Every frame written, including repeats.
-        var frames: [[UInt8]] = []
-        var badChecksums = 0
-        var opens = 0
+        package var frames: [[UInt8]] = []
+        package var badChecksums = 0
+        package var opens = 0
         /// The next N reads come back shifted, starting partway into the
         /// request, as the display coprocessor sometimes does.
-        var shiftNextReads = 0
+        package var shiftNextReads = 0
         /// The next N writes fail at the bus.
-        var failNextWrites = 0
+        package var failNextWrites = 0
         /// Every read fails at the bus, like a display that went away.
-        var readsFail = false
+        package var readsFail = false
         /// Nothing is answered: replies are null messages, like a display
         /// with DDC/CI turned off.
-        var silent = false
+        package var silent = false
         /// The first Get of a code after a Set of it reads 0 (an HP quirk).
-        var zeroAfterSet = false
-        var zeroPending: Set<UInt8> = []
+        package var zeroAfterSet = false
+        package var zeroPending: Set<UInt8> = []
     }
 
-    let state: OSAllocatedUnfairLock<State>
+    package let state: OSAllocatedUnfairLock<State>
 
-    init(_ configure: (inout State) -> Void = { _ in }) {
+    package init(_ configure: (inout State) -> Void = { _ in }) {
         var initial = State()
         configure(&initial)
         state = OSAllocatedUnfairLock(initialState: initial)
     }
 
     /// A display shaped like the HP E27m G4.
-    static func hp(capabilities: String = "") -> SimulatedDisplay {
+    package static func hp(capabilities: String = "") -> SimulatedDisplay {
         SimulatedDisplay { state in
             state.values = [
                 0x10: Value(current: 100, maximum: 100),
@@ -58,16 +63,16 @@ final class SimulatedDisplay: Sendable {
         }
     }
 
-    func value(_ code: UInt8) -> UInt16? {
+    package func value(_ code: UInt8) -> UInt16? {
         state.withLock { $0.values[code]?.current }
     }
 
-    func update(_ change: @Sendable (inout State) -> Void) {
+    package func update(_ change: @Sendable (inout State) -> Void) {
         state.withLock(change)
     }
 
     /// Opens a bus onto this display, as ``DDCChannel`` does on first use.
-    func openBus() -> SimulatedBus {
+    package func openBus() -> SimulatedBus {
         state.withLock { $0.opens += 1 }
         return SimulatedBus(display: self)
     }
@@ -134,32 +139,32 @@ final class SimulatedDisplay: Sendable {
         }.get()
     }
 
-    static func reply(_ payload: [UInt8]) -> [UInt8] {
+    package static func reply(_ payload: [UInt8]) -> [UInt8] {
         var frame: [UInt8] = [0x6E, 0x80 | UInt8(payload.count)] + payload
         frame.append(frame.reduce(0x50, ^))
         return frame
     }
 }
 
-final class SimulatedBus: DDCBus {
-    let display: SimulatedDisplay
+package final class SimulatedBus: DDCBus {
+    package let display: SimulatedDisplay
 
-    init(display: SimulatedDisplay) {
+    package init(display: SimulatedDisplay) {
         self.display = display
     }
 
-    func write(_ frame: [UInt8]) throws(DDCError) {
+    package func write(_ frame: [UInt8]) throws(DDCError) {
         try display.receive(frame)
     }
 
-    func read(length: Int) throws(DDCError) -> [UInt8] {
+    package func read(length: Int) throws(DDCError) -> [UInt8] {
         try display.send(length: length)
     }
 }
 
 extension DDCChannel {
     /// A channel onto a simulated display, with no pauses.
-    static func simulated(_ display: SimulatedDisplay, timing: DDCTiming = .immediate) -> DDCChannel {
+    package static func simulated(_ display: SimulatedDisplay, timing: DDCTiming = .immediate) -> DDCChannel {
         DDCChannel(label: "test", timing: timing) { () throws(DDCError) -> any DDCBus in
             display.openBus()
         }

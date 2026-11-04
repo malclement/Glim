@@ -1,5 +1,6 @@
 import CoreAudio
 @testable import GlimCore
+import GlimTestSupport
 import Testing
 
 /// Discovery, identity and lifecycle, against simulated displays.
@@ -32,6 +33,7 @@ import Testing
         #expect(manager.monitors.count == 1)
         #expect(await ready(monitor))
         #expect(monitor.name == "HP E27m G4")
+        #expect(manager.title(for: monitor) == "HP E27m G4")
         #expect(monitor.profile == .hpE27mG4)
         #expect(monitor.id == "HPN-3753-TEST0000001")
         #expect(monitor.brightness?.value == 100)
@@ -92,6 +94,7 @@ import Testing
         let manager = await started(platform)
 
         #expect(manager.monitors.map(\.id) == ["HPN-3753@dispext0", "HPN-3753@dispext1"])
+        #expect(manager.monitors.map(manager.title(for:)) == ["HP E27m G4 (1)", "HP E27m G4 (2)"])
         for monitor in manager.monitors {
             #expect(await ready(monitor))
             #expect(monitor.volume == nil)

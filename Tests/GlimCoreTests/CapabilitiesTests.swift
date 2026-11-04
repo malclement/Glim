@@ -1,4 +1,5 @@
 @testable import GlimCore
+import GlimTestSupport
 import Testing
 
 @Suite struct CapabilitiesTests {

@@ -1,4 +1,5 @@
 @testable import GlimCore
+import GlimTestSupport
 import Testing
 
 /// Encoding and decoding, checked against frames captured from the HP E27m G4.
