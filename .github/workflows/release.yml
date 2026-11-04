@@ -1,0 +1,221 @@
+name: Release
+
+# A v* tag builds the DMG and publishes a GitHub release. Running the workflow
+# by hand builds the same candidate and uploads it as an artifact, without
+# publishing anything. See docs/release.md.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Never cancel a run halfway through notarization.
+  cancel-in-progress: false
+
+# An explicit bash runs steps with -eo pipefail; the implicit default is only -e.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    name: Build, sign, notarize and publish
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      BUILD_NUMBER: ${{ github.run_number }}
+    # Signing material lives in $RUNNER_TEMP: glim-signing.keychain-db and
+    # glim-notary-key.p8. (The runner context cannot be used in job-level env.)
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Check the tag matches the app version
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Support/Info.plist)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match CFBundleShortVersionString $version in Support/Info.plist; expected v$version."
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME matches Support/Info.plist."
+
+      - name: Toolchain
+        run: |
+          swift --version
+          echo "SDK $(xcrun --show-sdk-version)"
+
+      - name: Build and test
+        run: make check
+
+      # Everything is compiled before any signing material reaches the runner.
+      - name: Build the release binary and icon
+        run: make release icon
+
+      # Secrets cannot appear in an `if:`, so this step turns them into an output.
+      # A partial set is an error rather than a quiet fallback to an unsigned
+      # release.
+      - name: Detect signing secrets
+        id: signing
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+        run: |
+          found=0
+          missing=""
+          for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD NOTARY_API_KEY_P8 NOTARY_API_KEY_ID NOTARY_API_ISSUER_ID; do
+            if [ -n "${!name}" ]; then found=$((found + 1)); else missing="$missing $name"; fi
+          done
+          if [ "$found" -eq 5 ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets found: building a Developer ID signed, notarized DMG."
+          elif [ "$found" -eq 0 ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No signing secrets: building an ad-hoc signed DMG. A tag publishes it as a draft release."
+          else
+            echo "::error::Signing secrets are incomplete; missing:$missing. Set all five, or none for an ad-hoc build."
+            exit 1
+          fi
+
+      - name: Import the Developer ID certificate and notary key
+        id: keychain
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+        run: |
+          umask 077
+          keychain="$RUNNER_TEMP/glim-signing.keychain-db"
+          # The keychain lives for this job only, so its password is made up
+          # here and never stored anywhere.
+          keychain_password=$(openssl rand -base64 32)
+          echo "::add-mask::$keychain_password"
+          security create-keychain -p "$keychain_password" "$keychain"
+          # No auto-lock: the DMG is signed after the app's notarization wait,
+          # which can outlast any short timeout.
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+
+          certificate="$RUNNER_TEMP/glim-certificate.p12"
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$certificate"
+          security import "$certificate" -k "$keychain" -f pkcs12 \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$certificate"
+          # Without the partition list codesign waits for a permission dialog
+          # nobody can click, and the job hangs.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$keychain_password" "$keychain" > /dev/null
+          # Search the new keychain first, keeping the existing ones.
+          existing=$(security list-keychains -d user | tr -d '"')
+          # shellcheck disable=SC2086 # one path per word, none contain spaces
+          security list-keychains -d user -s "$keychain" $existing
+
+          # Parsed from a variable: awk quitting early in a pipe would kill
+          # `security` with SIGPIPE, which pipefail turns into a failed step.
+          identities=$(security find-identity -v -p codesigning "$keychain")
+          identity=$(awk '/"Developer ID Application: /{print $2; exit}' <<< "$identities")
+          if [ -z "$identity" ]; then
+            echo "::error::MACOS_CERTIFICATE_P12 holds no valid Developer ID Application identity."
+            echo "$identities"
+            exit 1
+          fi
+          echo "Signing as: $(awk -F'"' '/"Developer ID Application: /{print $2; exit}' <<< "$identities")"
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+
+          printf '%s' "$NOTARY_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/glim-notary-key.p8"
+          chmod 600 "$RUNNER_TEMP/glim-notary-key.p8"
+
+      - name: Build, sign, notarize and verify
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          SIGN_IDENTITY: ${{ steps.keychain.outputs.identity }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+        run: |
+          export NOTARY_KEY_PATH="$RUNNER_TEMP/glim-notary-key.p8"
+          make dmg
+          make notarize
+          # The release notes say "notarized": a build that cannot prove it
+          # stops here instead of being published.
+          make verify-strict
+
+      - name: Build ad-hoc signed
+        if: steps.signing.outputs.enabled != 'true'
+        run: |
+          make dmg
+          make verify
+
+      # Also runs when an earlier step failed or the job was cancelled.
+      - name: Remove signing material
+        if: always()
+        run: |
+          keychain="$RUNNER_TEMP/glim-signing.keychain-db"
+          # Deleting it also takes it off the keychain search list.
+          if [ -f "$keychain" ]; then security delete-keychain "$keychain" || true; fi
+          rm -f "$RUNNER_TEMP/glim-notary-key.p8" "$RUNNER_TEMP/glim-certificate.p12"
+
+      - name: Upload the DMG
+        uses: actions/upload-artifact@v5
+        with:
+          # A branch name can contain "/", which artifact names cannot.
+          name: Glim-${{ steps.signing.outputs.enabled == 'true' && 'notarized' || 'adhoc' }}-run${{ github.run_number }}
+          path: dist/Glim-*.dmg
+          if-no-files-found: error
+
+      - name: Publish the GitHub release
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTARIZED: ${{ steps.signing.outputs.enabled }}
+        # Notes go through a file: a long multi-line string inside this YAML
+        # block is easy to break, and GitHub only reports that at trigger time.
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          dmg="dist/Glim-$version.dmg"
+          sha256=$(shasum -a 256 "$dmg" | awk '{print $1}')
+          notes="$RUNNER_TEMP/release-notes.md"
+          {
+            if [ "$NOTARIZED" = true ]; then
+              echo "Signed with a Developer ID and notarized by Apple. Open the disk image and drag Glim to Applications."
+            else
+              echo "> [!IMPORTANT]"
+              echo "> This build is **unsigned**: it has only an ad-hoc signature, no Developer ID, and Apple has not notarized it, so macOS blocks it the first time it opens."
+              echo "> Drag Glim to Applications and open it once. Then open **System Settings → Privacy & Security** and click **Open Anyway** next to the message about Glim."
+              echo "> (macOS 15 removed the old right-click → Open shortcut.)"
+              echo "> Or clear the quarantine flag in Terminal:"
+              echo ">"
+              echo '> ```sh'
+              echo '> xattr -dr com.apple.quarantine /Applications/Glim.app'
+              echo '> ```'
+            fi
+            echo
+            echo "Requires macOS 14 or later on a Mac with Apple silicon."
+            echo
+            echo "SHA-256 of \`Glim-$version.dmg\`:"
+            echo
+            echo '```'
+            echo "$sha256  Glim-$version.dmg"
+            echo '```'
+          } > "$notes"
+
+          flags=""
+          if [ "$NOTARIZED" != true ]; then flags="$flags --draft"; fi
+          case "$GITHUB_REF_NAME" in *-*) flags="$flags --prerelease" ;; esac
+          # shellcheck disable=SC2086 # flags is a list of fixed words
+          gh release create "$GITHUB_REF_NAME" "$dmg" \
+            --verify-tag \
+            --title "Glim $version" \
+            --notes-file "$notes" \
+            --generate-notes \
+            $flags
+          echo "Published $GITHUB_REF_NAME${flags:+ ($flags )}, sha256 $sha256"
