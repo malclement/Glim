@@ -23,8 +23,11 @@ public enum DDC {
     /// How many bytes Glim reads for any reply. The longest reply it requests
     /// (a 32-byte capabilities fragment) is 38 bytes on the wire.
     public static let replyReadLength = 40
-    /// DDC/CI limits a message payload to 32 bytes plus the op-code and offset.
+    /// The length byte holds 7 bits of length.
     static let maximumPayloadLength = 0x7F
+    /// The timing report reply. Glim never requests it, but the display can
+    /// still send it, and it is the one reply with a bare length byte.
+    static let timingReplyOpCode: UInt8 = 0x4E
 
     /// Builds the bytes written for one request. `payload` is the op-code and
     /// its arguments; it must be at most 127 bytes, which every op-code Glim
@@ -51,7 +54,7 @@ public enum DDC {
         let length = Int(lengthByte & 0x7F)
         // The timing report (op-code 0x4E) carries a bare length byte 0x06,
         // without the 0x80 bit every other reply sets. Verified on the HP.
-        let isBareTimingReply = lengthByte == 0x06 && raw.count > 2 && raw[2] == TimingReport.opCode
+        let isBareTimingReply = lengthByte == 0x06 && raw.count > 2 && raw[2] == timingReplyOpCode
         guard lengthByte & 0x80 != 0 || isBareTimingReply else { return .invalid(.missingLengthFlag) }
         guard raw.count >= length + 3 else { return .invalid(.truncated) }
         let checksum = raw[0..<(length + 2)].reduce(replyChecksumSeed, ^)
@@ -152,34 +155,5 @@ public enum CapabilitiesRequest {
         let offset = UInt16(payload[1]) << 8 | UInt16(payload[2])
         guard offset == expectedOffset else { return nil }
         return Array(payload.dropFirst(3))
-    }
-}
-
-// MARK: - Timing report (op-codes 07 / 4E)
-
-/// The display's measurement of the incoming video timing.
-public struct TimingReport: Equatable, Sendable {
-    static let requestOpCode: UInt8 = 0x07
-    static let opCode: UInt8 = 0x4E
-
-    public let status: UInt8
-    /// Horizontal frequency in Hz.
-    public let horizontalHz: Int
-    /// Vertical frequency in hundredths of a hertz.
-    public let verticalCentiHz: Int
-
-    public var verticalHz: Double { Double(verticalCentiHz) / 100 }
-    public var horizontalPositive: Bool { status & 0x02 != 0 }
-    public var verticalPositive: Bool { status & 0x01 != 0 }
-    public var outOfRange: Bool { status & 0x80 != 0 }
-
-    public static let request: [UInt8] = [requestOpCode]
-
-    /// Parses `4E status hH hL vH vL`. H is in 10 Hz units, V in 0.01 Hz units.
-    public static func parse(_ payload: [UInt8]) -> TimingReport? {
-        guard payload.count >= 6, payload[0] == opCode else { return nil }
-        let h = Int(payload[2]) << 8 | Int(payload[3])
-        let v = Int(payload[4]) << 8 | Int(payload[5])
-        return TimingReport(status: payload[1], horizontalHz: h * 10, verticalCentiHz: v)
     }
 }

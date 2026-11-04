@@ -1,0 +1,288 @@
+import Foundation
+import Observation
+
+/// A reading from a device: a value and, for levels, the range it lives in.
+public struct DeviceReading<Value: Sendable>: Sendable {
+    public var value: Value
+    public var range: ClosedRange<Double>?
+
+    public init(value: Value, range: ClosedRange<Double>? = nil) {
+        self.value = value
+        self.range = range
+    }
+}
+
+/// How a control reads and writes its device.
+public struct ControlBackend<Value: Sendable>: Sendable {
+    public var read: @Sendable () async throws -> DeviceReading<Value>
+    public var write: @Sendable (Value) async throws -> Void
+    /// Whether failures say something about the monitor's DDC/CI link (and
+    /// so its status), as opposed to a separate device such as its speakers.
+    public var reportsLinkStatus: Bool
+
+    public init(read: @escaping @Sendable () async throws -> DeviceReading<Value>,
+                write: @escaping @Sendable (Value) async throws -> Void,
+                reportsLinkStatus: Bool = true) {
+        self.read = read
+        self.write = write
+        self.reportsLinkStatus = reportsLinkStatus
+    }
+}
+
+public struct ControlTiming: Sendable, Equatable {
+    /// After the last write of a burst, how long to wait before reading the
+    /// value back to reconcile what is shown with what the device did.
+    public var settleDelay: Duration
+    /// The longest a single read or write may take.
+    public var operationTimeout: Duration
+
+    public init(settleDelay: Duration = .milliseconds(800), operationTimeout: Duration = .seconds(5)) {
+        self.settleDelay = settleDelay
+        self.operationTimeout = operationTimeout
+    }
+
+    public static let standard = ControlTiming()
+}
+
+/// A failure shown next to a control.
+public struct ControlFailure: Equatable, Sendable {
+    public var message: String
+    /// Whether retrying might help.
+    public var isTransient: Bool
+
+    init(_ error: any Error) {
+        message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+        switch error {
+        case let error as DDCError: isTransient = error.isTransient
+        case AudioError.notSupported: isTransient = false
+        default: isTransient = true
+        }
+    }
+}
+
+/// One control of a monitor (a slider, a toggle, a choice) and its
+/// conversation with the device.
+///
+/// **What is shown.** ``value`` is what the UI displays. A user change sets
+/// it immediately, before the device has seen anything. ``deviceValue`` is
+/// the last value actually read from the device.
+///
+/// **Writes.** At most one write is in flight. While it is, further changes
+/// only replace a single pending value, so a fast slider drag produces a
+/// short series of writes ending in the final position, never an unbounded
+/// queue. A value equal (after ``quantize``) to the last one written is not
+/// sent again.
+///
+/// **Reads.** When writes stop, the value is read back after
+/// ``ControlTiming/settleDelay`` so the display reflects what the device
+/// accepted. A read only applies if nothing happened since it was issued (no
+/// newer change, no pending write, no drag in progress), so a slow reply can
+/// never overwrite newer intent.
+@MainActor
+@Observable
+public final class DeviceControl<Value: Sendable & Equatable> {
+    /// What the UI shows. nil until the first read succeeds.
+    public private(set) var value: Value?
+    /// The last value read from the device.
+    public private(set) var deviceValue: Value?
+    /// The range a level lives in, from the device.
+    public private(set) var range: ClosedRange<Double>?
+    public private(set) var failure: ControlFailure?
+    /// True while the user is dragging.
+    public private(set) var isEditing = false
+
+    @ObservationIgnored private let backend: ControlBackend<Value>
+    @ObservationIgnored private let timing: ControlTiming
+    @ObservationIgnored private let quantize: @Sendable (Value, ClosedRange<Double>?) -> Value
+    @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var pending: Value?
+    @ObservationIgnored private var lastWritten: Value?
+    @ObservationIgnored private var writer: Task<Void, Never>?
+    @ObservationIgnored private var reconciler: Task<Void, Never>?
+    @ObservationIgnored private var invalidated = false
+    /// Tells the owning monitor whether an operation reached the device.
+    @ObservationIgnored var onLinkOutcome: (@MainActor (Result<Void, any Error>) -> Void)?
+
+    public init(backend: ControlBackend<Value>, timing: ControlTiming = .standard,
+                quantize: @escaping @Sendable (Value, ClosedRange<Double>?) -> Value = { value, _ in value }) {
+        self.backend = backend
+        self.timing = timing
+        self.quantize = quantize
+    }
+
+    /// Whether a write is in flight or waiting.
+    public var isWriting: Bool { writer != nil }
+
+    // MARK: User intent
+
+    /// Applies a user change: shown at once, written as soon as the device is
+    /// free. Ignored until the device has been read once, because until then
+    /// its range, and whether it answers at all, is unknown.
+    public func set(_ newValue: Value) {
+        guard !invalidated, value != nil else { return }
+        let target = quantize(newValue, range)
+        guard target != value || writer != nil else { return }
+        value = target
+        generation &+= 1
+        reconciler?.cancel()
+        reconciler = nil
+        pending = target
+        if writer == nil {
+            writer = Task { [weak self] in await self?.drainWrites() }
+        }
+    }
+
+    /// Call when a drag starts and ends. Reads are held off during a drag.
+    public func setEditing(_ editing: Bool) {
+        isEditing = editing
+        if !editing, writer == nil { scheduleReconcile() }
+    }
+
+    // MARK: Device state
+
+    /// Reads the device now, unless a write or a drag is in progress (their
+    /// own reconciliation will follow).
+    public func refresh() async {
+        guard !invalidated, writer == nil, !isEditing else { return }
+        await readBack(expecting: generation)
+    }
+
+    /// Stops all work. The control is dead afterwards.
+    func invalidate() {
+        invalidated = true
+        pending = nil
+        writer?.cancel()
+        reconciler?.cancel()
+    }
+
+    // MARK: Internals
+
+    private func drainWrites() async {
+        while let target = pending, !invalidated {
+            pending = nil
+            if target == lastWritten { continue }
+            do {
+                let write = backend.write
+                try await withDeadline(timing.operationTimeout) { try await write(target) }
+                // A DDC/CI write has no acknowledgement, so success here only
+                // means the bus took the frame. Only a read reports the link as
+                // healthy.
+                lastWritten = target
+                failure = nil
+            } catch {
+                failure = ControlFailure(error)
+                if backend.reportsLinkStatus { onLinkOutcome?(.failure(error)) }
+            }
+        }
+        writer = nil
+        if !isEditing { scheduleReconcile() }
+    }
+
+    private func scheduleReconcile() {
+        guard !invalidated else { return }
+        reconciler?.cancel()
+        let expected = generation
+        let delay = timing.settleDelay
+        reconciler = Task { [weak self] in
+            if delay > .zero {
+                do { try await Task.sleep(for: delay) } catch { return }
+            }
+            await self?.reconcile(expecting: expected)
+        }
+    }
+
+    private func reconcile(expecting expected: Int) async {
+        reconciler = nil
+        guard writer == nil, !isEditing else { return }
+        await readBack(expecting: expected)
+    }
+
+    private func readBack(expecting expected: Int) async {
+        do {
+            let read = backend.read
+            let reading = try await withDeadline(timing.operationTimeout) { try await read() }
+            // Anything the user did while the read was out wins over it.
+            guard !invalidated, generation == expected, writer == nil, !isEditing else { return }
+            if let range = reading.range { self.range = range }
+            deviceValue = reading.value
+            value = reading.value
+            lastWritten = reading.value
+            failure = nil
+            if backend.reportsLinkStatus { onLinkOutcome?(.success(())) }
+        } catch {
+            guard !invalidated, generation == expected else { return }
+            failure = ControlFailure(error)
+            if backend.reportsLinkStatus { onLinkOutcome?(.failure(error)) }
+        }
+    }
+}
+
+// MARK: - Backends
+
+extension ControlBackend where Value == Double {
+    /// A continuous VCP code. The range is 0 to the maximum the display
+    /// reports with every read.
+    public static func vcpLevel(_ code: VCPCode, on device: any DDCDevice) -> ControlBackend<Double> {
+        ControlBackend(
+            read: {
+                let reading = try await device.read(code)
+                return DeviceReading(value: Double(reading.current), range: 0...Double(max(reading.maximum, 1)))
+            },
+            write: { value in
+                try await device.write(code, value: UInt16(clamping: Int(value.rounded())))
+            }
+        )
+    }
+
+    /// An audio output's volume, 0 to 1.
+    public static func volume(of output: any AudioOutput) -> ControlBackend<Double> {
+        ControlBackend(
+            read: { DeviceReading(value: try await output.volume(), range: 0...1) },
+            write: { try await output.setVolume($0) },
+            reportsLinkStatus: false
+        )
+    }
+}
+
+extension ControlBackend where Value == Bool {
+    /// VCP 0x8D: 1 mutes, 2 unmutes.
+    public static func vcpMute(on device: any DDCDevice) -> ControlBackend<Bool> {
+        ControlBackend(
+            read: { DeviceReading(value: try await device.read(.audioMute).current == 1) },
+            write: { try await device.write(.audioMute, value: $0 ? 1 : 2) }
+        )
+    }
+
+    public static func mute(of output: any AudioOutput) -> ControlBackend<Bool> {
+        ControlBackend(
+            read: { DeviceReading(value: try await output.isMuted()) },
+            write: { try await output.setMuted($0) },
+            reportsLinkStatus: false
+        )
+    }
+}
+
+extension ControlBackend where Value == UInt16 {
+    /// A non-continuous VCP code, such as the input source.
+    public static func vcpChoice(_ code: VCPCode, on device: any DDCDevice) -> ControlBackend<UInt16> {
+        ControlBackend(
+            read: { DeviceReading(value: try await device.read(code).current) },
+            write: { try await device.write(code, value: $0) }
+        )
+    }
+}
+
+/// Rounds a level to whole device steps and keeps it in range.
+@Sendable
+public func quantizeToSteps(_ value: Double, in range: ClosedRange<Double>?) -> Double {
+    let rounded = value.rounded()
+    guard let range else { return rounded }
+    return min(max(rounded, range.lowerBound), range.upperBound)
+}
+
+/// Rounds a 0–1 level to hundredths, so a drag sends at most 100 distinct
+/// values.
+@Sendable
+public func quantizeToPercent(_ value: Double, in range: ClosedRange<Double>?) -> Double {
+    min(max((value * 100).rounded() / 100, range?.lowerBound ?? 0), range?.upperBound ?? 1)
+}
