@@ -70,7 +70,7 @@ release:
 
 icon: dist/AppIcon.icns
 
-dist/AppIcon.icns: scripts/make-icon.swift
+dist/AppIcon.icns: scripts/make-icon.swift Support/AppIcon-source.png
 	rm -rf dist/AppIcon.iconset
 	mkdir -p dist/AppIcon.iconset
 	swift scripts/make-icon.swift dist/AppIcon.iconset

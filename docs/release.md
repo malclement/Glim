@@ -84,7 +84,7 @@ make verify-strict
 
 ## How it works
 
-- `scripts/make-icon.swift` draws the icon and the DMG background with CoreGraphics. No image files are committed.
+- `scripts/make-icon.swift` renders the app icon from `Support/AppIcon-source.png`, the artwork as delivered (it cuts the tile out of its black square and places it on Apple's icon grid), and draws the DMG background with CoreGraphics.
 - `scripts/make-dmg.sh` uses [dmgbuild](https://github.com/dmgbuild/dmgbuild) (MIT) to write the Finder layout into the image without driving Finder. dmgbuild and its two dependencies are pinned by version and sha256 and installed into a throwaway virtualenv. To upgrade them, update `requirements` in that script with the new versions and their wheel hashes from PyPI.
 - `scripts/notarize.sh` submits the zipped app, staples the app, rebuilds and signs the DMG, then submits and staples the DMG.
 - `scripts/verify.sh` reports the result. Its default mode tolerates an ad-hoc build. `--strict` is the release gate, and it also checks that the DMG contains the same build as `dist/Glim.app`.
