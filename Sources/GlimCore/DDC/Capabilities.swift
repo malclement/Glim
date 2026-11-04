@@ -68,17 +68,20 @@ public struct MonitorCapabilities: Equatable, Sendable {
     /// Splits `key(value)key(value)…` at the top level, after removing the
     /// outer parentheses that most displays (but not all) wrap the string in.
     static func topLevelFields(of string: String) -> [(String, String)] {
-        var body = Substring(string.trimmingCharacters(in: .whitespacesAndNewlines))
-        if body.first == "(" {
-            let close = matchingParenthesis(in: body, openingAt: body.startIndex)
-            if let close, body.index(after: close) == body.endIndex {
-                body = body[body.index(after: body.startIndex)..<close]
-            } else if close == nil {
-                // Truncated, for example by a failed read: drop the opening
-                // parenthesis and keep what arrived.
-                body = body.dropFirst()
-            }
+        let body = Substring(string.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard body.first == "(" else { return fields(in: body) }
+        guard let close = matchingParenthesis(in: body, openingAt: body.startIndex) else {
+            // Truncated, for example by a failed read: drop the opening
+            // parenthesis and keep what arrived.
+            return fields(in: body.dropFirst())
         }
+        // Inside the outer group, then whatever follows it: usually nothing,
+        // sometimes padding or junk, which yields no fields.
+        return fields(in: body[body.index(after: body.startIndex)..<close])
+            + fields(in: body[body.index(after: close)...])
+    }
+
+    private static func fields(in body: Substring) -> [(String, String)] {
         var fields: [(String, String)] = []
         var cursor = body.startIndex
         while cursor < body.endIndex {

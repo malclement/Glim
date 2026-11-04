@@ -19,12 +19,19 @@ public final class MonitorManager {
     public private(set) var isDiscovering = true
 
     @ObservationIgnored private let platform: any MonitorPlatform
+    /// One channel per transport. Every monitor object on a transport, the
+    /// current one and any it replaced that may still be finishing, shares
+    /// it, so all traffic on that I2C bus is serialised in one place.
+    @ObservationIgnored private var channels: [UInt64: any DDCDevice] = [:]
     @ObservationIgnored private var stopObserving: (@MainActor () -> Void)?
     @ObservationIgnored private var pendingRescan: Task<Void, Never>?
     @ObservationIgnored private var isRescanning = false
     @ObservationIgnored private var rescanRequested = false
     @ObservationIgnored private var identityRetries = 0
     @ObservationIgnored private var started = false
+    /// Bumped by each audio association, so an older one that finishes late
+    /// cannot undo a newer one.
+    @ObservationIgnored private var audioGeneration = 0
 
     public init(platform: any MonitorPlatform = LivePlatform()) {
         self.platform = platform
@@ -35,6 +42,8 @@ public final class MonitorManager {
     public func start() {
         guard !started else { return }
         started = true
+        isDiscovering = true
+        identityRetries = 0
         guard platform.isDDCAvailable else {
             availability = .unavailable("Glim needs a Mac with Apple silicon. This Mac doesn't provide the DDC/CI interface Glim uses.")
             isDiscovering = false
@@ -57,6 +66,7 @@ public final class MonitorManager {
         pendingRescan = nil
         monitors.forEach { $0.invalidate() }
         monitors = []
+        channels.removeAll()
         started = false
     }
 
@@ -109,53 +119,77 @@ public final class MonitorManager {
         for (display, key) in zip(displays, keys) {
             if let existing = monitors.first(where: { $0.id == key }) {
                 if existing.display.serviceID != display.serviceID {
-                    existing.reconnect(to: display, device: platform.makeDevice(for: display))
+                    existing.reconnect(to: display, device: channel(for: display))
                 }
                 next.append(existing)
             } else {
                 Log.discovery.info("monitor connected: \(display.identity?.productName ?? "unidentified", privacy: .public)")
-                let monitor = Monitor(id: key, display: display, device: platform.makeDevice(for: display), timing: platform.controlTiming)
+                let monitor = Monitor(id: key, display: display, device: channel(for: display), timing: platform.controlTiming)
                 monitor.start()
                 next.append(monitor)
             }
         }
         for monitor in monitors where !next.contains(where: { $0 === monitor }) {
-            Log.discovery.info("monitor disconnected: \(monitor.name, privacy: .public)")
+            Log.discovery.info("monitor gone: \(monitor.name, privacy: .public)")
             monitor.invalidate()
         }
         monitors = next
+        let live = Set(displays.map(\.serviceID))
+        channels = channels.filter { live.contains($0.key) }
+    }
+
+    private func channel(for display: DiscoveredDisplay) -> any DDCDevice {
+        if let existing = channels[display.serviceID] { return existing }
+        let channel = platform.makeDevice(for: display)
+        channels[display.serviceID] = channel
+        return channel
     }
 
     /// A key per display that survives reconnects. Two identical monitors
     /// without a usable serial share an EDID key, so those also get their
     /// display pipe.
     static func monitorKeys(for displays: [DiscoveredDisplay]) -> [String] {
+        func counts(_ keys: [String]) -> [String: Int] {
+            keys.reduce(into: [:]) { $0[$1, default: 0] += 1 }
+        }
         let base = displays.map { $0.identity?.stableKey ?? "unidentified-\($0.serviceID)" }
-        let counts = base.reduce(into: [String: Int]()) { $0[$1, default: 0] += 1 }
-        return zip(base, displays).map { key, display in
-            (counts[key] ?? 0) > 1 ? "\(key)@\(display.framebuffer ?? String(display.serviceID))" : key
+        let baseCounts = counts(base)
+        let piped = zip(base, displays).map { key, display in
+            (baseCounts[key] ?? 0) > 1 ? "\(key)@\(display.framebuffer ?? String(display.serviceID))" : key
+        }
+        // Still equal (same EDID on the same pipe, for instance an old and a
+        // new transport seen together): the transport tells them apart.
+        let pipedCounts = counts(piped)
+        return zip(piped, displays).map { key, display in
+            (pipedCounts[key] ?? 0) > 1 ? "\(key)#\(display.serviceID)" : key
         }
     }
 
     // MARK: Audio
 
     /// Ties each monitor whose speakers are a USB Audio device to that device.
-    /// When it cannot tell which device belongs to which monitor (two of the
-    /// same model connected), it ties none rather than guess: a wrong guess
-    /// would change some other speaker's volume.
+    /// When it cannot tell which device belongs to which monitor, it ties none
+    /// rather than guess, because a wrong guess changes some other speaker's
+    /// volume. That covers two monitors of the same model, and any connected
+    /// display whose EDID is not known yet, which could be one more of them.
     private func associateAudio() async {
+        audioGeneration &+= 1
+        let generation = audioGeneration
         let wanting = monitors.filter { if case .usbAudio = $0.profile.volume { true } else { false } }
         guard !wanting.isEmpty else { return }
         let outputs = await platform.audioOutputs()
-        for monitor in wanting {
+        // A newer association started while this one waited: it wins.
+        guard generation == audioGeneration, started else { return }
+        let unidentified = monitors.contains { $0.identity == nil }
+        for monitor in wanting where monitors.contains(where: { $0 === monitor }) {
             guard case .usbAudio(let prefix) = monitor.profile.volume else { continue }
             let candidates = outputs.filter { $0.isUSB && $0.name.hasPrefix(prefix) }
             let sameModel = wanting.filter { $0.profile.volume == monitor.profile.volume }
-            let device = candidates.count == 1 && sameModel.count == 1 ? candidates.first : nil
-            if device == nil, !candidates.isEmpty {
-                Log.audio.notice("\(candidates.count) audio devices for \(sameModel.count) \(prefix, privacy: .public) monitor(s); not guessing")
+            let unambiguous = candidates.count == 1 && sameModel.count == 1 && !unidentified
+            if !unambiguous, !candidates.isEmpty {
+                Log.audio.notice("\(candidates.count) audio device(s) for \(sameModel.count) \(prefix, privacy: .public) monitor(s)\(unidentified ? " and an unidentified display" : ""); not guessing")
             }
-            monitor.attachAudio(device, make: platform.makeAudioOutput)
+            monitor.attachAudio(unambiguous ? candidates.first : nil, make: platform.makeAudioOutput)
         }
     }
 

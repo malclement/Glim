@@ -8,21 +8,25 @@ final class DisplayServiceNotifier {
     private let onChange: @MainActor () -> Void
     private var port: IONotificationPortRef?
     private var iterators: [io_iterator_t] = []
+    /// The reference IOKit's callback context holds while registered, so the
+    /// notifier cannot be freed under a live registration even if nobody
+    /// calls ``stop()``. That would be a leak, never a dangling pointer.
+    private var registration: Unmanaged<DisplayServiceNotifier>?
 
     init(onChange: @escaping @MainActor () -> Void) {
         self.onChange = onChange
     }
 
-    /// Registers for notifications. The notifier must stay alive, and be
-    /// stopped with ``stop()``, while registered: IOKit holds an unretained
-    /// pointer to it.
+    /// Registers for notifications until ``stop()``.
     func start() {
         guard port == nil, let port = IONotificationPortCreate(kIOMainPortDefault) else { return }
         self.port = port
         // Callbacks arrive on the main queue, which is what lets the callback
         // below assume main-actor isolation.
         IONotificationPortSetDispatchQueue(port, .main)
-        let context = Unmanaged.passUnretained(self).toOpaque()
+        let registration = Unmanaged.passRetained(self)
+        self.registration = registration
+        let context = registration.toOpaque()
         for kind in [kIOFirstMatchNotification, kIOTerminatedNotification] {
             var iterator: io_iterator_t = 0
             let result = IOServiceAddMatchingNotification(
@@ -43,6 +47,9 @@ final class DisplayServiceNotifier {
         iterators.removeAll()
         if let port { IONotificationPortDestroy(port) }
         port = nil
+        // Only after the port is gone: no callback can arrive any more.
+        registration?.release()
+        registration = nil
     }
 
     fileprivate func fire() {

@@ -20,11 +20,18 @@ public struct MonitorProfile: Sendable, Equatable {
         case usbAudio(deviceNamePrefix: String)
     }
 
+    /// A control a profile can offer.
+    public enum Control: Sendable, Hashable {
+        case brightness, contrast, volume, mute, input
+    }
+
     public var id: String
-    /// True when every control below was exercised on the real monitor and
-    /// read back. False for monitors described only by their own
-    /// capabilities string.
-    public var isVerified: Bool
+    /// True when the profile was built by testing the model on real
+    /// hardware. ``untested`` lists the controls that still were not.
+    /// False for monitors described only by their own capabilities string.
+    public var isTested: Bool
+    /// Controls offered without having been exercised on the hardware.
+    public var untested: Set<Control>
     public var brightness: Bool
     public var contrast: Bool
     public var volume: VolumeRoute?
@@ -34,10 +41,11 @@ public struct MonitorProfile: Sendable, Equatable {
     /// condition: DDC/CI being off is one cause among several.
     public var ddcHelp: String
 
-    public init(id: String, isVerified: Bool, brightness: Bool, contrast: Bool,
+    public init(id: String, isTested: Bool, untested: Set<Control> = [], brightness: Bool, contrast: Bool,
                 volume: VolumeRoute?, inputs: [InputOption]?, ddcHelp: String) {
         self.id = id
-        self.isVerified = isVerified
+        self.isTested = isTested
+        self.untested = untested
         self.brightness = brightness
         self.contrast = contrast
         self.volume = volume
@@ -47,6 +55,11 @@ public struct MonitorProfile: Sendable, Equatable {
 
     /// True for a monitor Glim has no profile for.
     public var isGeneric: Bool { id == Self.genericID }
+
+    /// Whether this control was exercised on this model's hardware.
+    public func isTested(_ control: Control) -> Bool {
+        isTested && !untested.contains(control)
+    }
 
     private static let genericID = "generic"
 
@@ -60,16 +73,20 @@ public struct MonitorProfile: Sendable, Equatable {
         ({ $0.vendorID == 0x220E && $0.productID == 0x3753 }, .hpE27mG4),
     ]
 
-    /// HP E27m G4, verified on firmware 1.0 over USB-C (docs/controls.md).
+    /// HP E27m G4, tested on firmware 1.0 over USB-C (docs/controls.md).
     ///
     /// - Brightness 0x10 and contrast 0x12: written and read back.
-    /// - Volume: the speakers are a USB Audio device. DDC 0x62 accepts writes
-    ///   and ignores them; it only mirrors the USB level.
+    /// - Volume and mute: the speakers are a USB Audio device, set and read
+    ///   back. DDC 0x62 accepts writes and ignores them; it only mirrors the
+    ///   USB level.
     /// - Inputs: the three values in the monitor's capabilities string, with
-    ///   HP's names (0x13 is HP's USB-C value; MCCS reserves it).
+    ///   HP's names (0x13 is HP's USB-C value; MCCS reserves it). **Never
+    ///   written to the hardware**: the owner deferred input switching, and
+    ///   whether DDC still answers afterwards is unknown.
     public static let hpE27mG4 = MonitorProfile(
         id: "hp-e27m-g4",
-        isVerified: true,
+        isTested: true,
+        untested: [.input],
         brightness: true,
         contrast: true,
         volume: .usbAudio(deviceNamePrefix: "HP E27m G4"),
@@ -81,17 +98,20 @@ public struct MonitorProfile: Sendable, Equatable {
         ddcHelp: "If DDC/CI is off, turn it on in the monitor's menu under Management › DDC/CI."
     )
 
-    /// A monitor Glim has no profile for. Controls come from its
-    /// capabilities string, and each one is only shown once it answers a read.
+    /// A monitor Glim has no profile for. Brightness and contrast are always
+    /// tried, since nearly every DDC/CI monitor has them and a capabilities
+    /// string can omit codes the monitor answers; volume and inputs need the
+    /// capabilities string, which gives the input values. A control is only
+    /// shown once it answers a read.
     public static func generic(capabilities: MonitorCapabilities?) -> MonitorProfile {
         let inputs = capabilities.map { caps in
             caps.values(for: .inputSource).map { InputOption(value: UInt16($0), name: InputSourceNames.name(for: UInt16($0))) }
         }
         return MonitorProfile(
             id: genericID,
-            isVerified: false,
-            brightness: capabilities?.lists(.brightness) ?? true,
-            contrast: capabilities?.lists(.contrast) ?? true,
+            isTested: false,
+            brightness: true,
+            contrast: true,
             volume: capabilities?.lists(.audioVolume) == true ? .ddc : nil,
             // A single listed input is no choice at all.
             inputs: (inputs?.count ?? 0) >= 2 ? inputs : nil,

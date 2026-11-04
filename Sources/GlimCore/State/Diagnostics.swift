@@ -26,7 +26,9 @@ extension MonitorManager {
                 lines.append("  EDID: not matched to its transport")
             }
             lines.append("  pipe: \(monitor.displayPipe ?? "?")")
-            lines.append("  profile: \(monitor.profile.id)\(monitor.profile.isVerified ? " (verified)" : "")")
+            let untested = monitor.profile.untested.map { "\($0)" }.sorted()
+            let tested = monitor.profile.isTested ? " (tested\(untested.isEmpty ? "" : "; untested: \(untested.joined(separator: ", "))"))" : ""
+            lines.append("  profile: \(monitor.profile.id)\(tested)")
             lines.append("  status: \(monitor.status)")
             lines.append("  brightness: \(Self.describe(monitor.brightness))")
             lines.append("  contrast: \(Self.describe(monitor.contrast))")

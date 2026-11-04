@@ -31,13 +31,16 @@ public struct DDCTiming: Sendable, Equatable {
     public var replyDelay: Duration = .milliseconds(50)
     /// Quiet time after a Set before the next message, per MCCS.
     public var postSetDelay: Duration = .milliseconds(50)
-    /// A Get of a code sent right after a Set of that code can read 0, so
-    /// Glim waits at least this long between the two.
+    /// A Get sent right after a Set can read 0, so no Get goes out sooner
+    /// than this after any Set. The research saw it for the code just set; it
+    /// is applied to every code because nobody checked the others.
     public var getAfterSetDelay: Duration = .milliseconds(200)
-    /// If such a Get still reads 0 within this window after setting a
-    /// non-zero value, it is read once more after `zeroReadRetryDelay`.
+    /// If a Get of a code still reads 0 within this window after setting it
+    /// to non-zero, it is read again, up to `zeroReadRetries` times, after
+    /// `zeroReadRetryDelay` each (as `glim set` does).
     public var zeroReadRetryWindow: Duration = .seconds(2)
     public var zeroReadRetryDelay: Duration = .milliseconds(150)
+    public var zeroReadRetries = 2
     /// Attempts per Get. Shifted reads are common enough (about one in six
     /// while reading the capabilities string) that one retry is not enough.
     public var readAttempts = 4
@@ -46,6 +49,9 @@ public struct DDCTiming: Sendable, Equatable {
     /// After this many consecutive transport failures the IOAVService is
     /// reopened on the next operation, in case it went stale across a sleep.
     public var reopenAfterFailures = 3
+    /// Likewise after this many consecutive Gets that got no valid reply,
+    /// even if their writes went through.
+    public var reopenAfterFailedReads = 2
 
     public static let standard = DDCTiming()
 
@@ -73,7 +79,15 @@ public actor DDCChannel: DDCDevice {
     private let clock = ContinuousClock()
     private var quietUntil: ContinuousClock.Instant?
     private var lastSets: [VCPCode: (value: UInt16, at: ContinuousClock.Instant)] = [:]
+    private var lastSetAt: ContinuousClock.Instant?
     private var consecutiveFailures = 0
+    private var consecutiveFailedReads = 0
+
+    /// The only codes Glim ever writes. Anything else is refused here, below
+    /// the UI, whatever the caller: some codes blank the screen, turn DDC/CI
+    /// off or wipe settings (docs/protocol.md). Extending this is a deliberate
+    /// change.
+    public static let writableCodes: Set<VCPCode> = [.brightness, .contrast, .inputSource, .audioVolume, .audioMute]
 
     public nonisolated var unownedExecutor: UnownedSerialExecutor {
         queue.asUnownedSerialExecutor()
@@ -94,29 +108,44 @@ public actor DDCChannel: DDCDevice {
 
     // MARK: DDCDevice
 
+    // Every operation checks for cancellation before it touches the bus. An
+    // operation whose caller gave up (a timeout, a monitor going away) may
+    // still be queued on this actor; it must not run late.
+
     public func read(_ code: VCPCode) throws -> VCPReading {
-        if let last = lastSets[code] {
-            wait(until: last.at.advanced(by: timing.getAfterSetDelay))
+        try Task.checkCancellation()
+        if let lastSetAt {
+            wait(until: lastSetAt.advanced(by: timing.getAfterSetDelay))
         }
         var reading = try get(code)
-        if reading.current == 0, let last = lastSets[code], last.value != 0,
-           last.at.duration(to: clock.now) < timing.zeroReadRetryWindow {
+        var retries = 0
+        while reading.current == 0, retries < timing.zeroReadRetries, let last = lastSets[code], last.value != 0,
+              last.at.duration(to: clock.now) < timing.zeroReadRetryWindow {
             Log.ddc.debug("\(self.label, privacy: .public) \(code, privacy: .public) read 0 after a set; reading again")
+            retries += 1
             pause(timing.zeroReadRetryDelay)
+            try Task.checkCancellation()
             reading = try get(code)
         }
         return reading
     }
 
     public func write(_ code: VCPCode, value: UInt16) throws {
+        guard Self.writableCodes.contains(code) else {
+            Log.ddc.fault("\(self.label, privacy: .public) refused a write to \(code, privacy: .public)")
+            throw DDCError.refused(code)
+        }
+        try Task.checkCancellation()
         try send(DDC.requestFrame(VCPRequest.set(code.rawValue, value: value)))
         let now = clock.now
         lastSets[code] = (value, now)
+        lastSetAt = now
         quietUntil = now.advanced(by: timing.postSetDelay)
         Log.ddc.debug("\(self.label, privacy: .public) set \(code, privacy: .public) = \(value)")
     }
 
     public func capabilitiesFragment(at offset: UInt16) throws -> [UInt8] {
+        try Task.checkCancellation()
         let frame = DDC.requestFrame(CapabilitiesRequest.fragment(at: offset))
         var failure = DDCError.noReply
         for _ in 0..<max(1, timing.fragmentAttempts) {
@@ -138,6 +167,7 @@ public actor DDCChannel: DDCDevice {
         let frame = DDC.requestFrame(VCPRequest.get(code.rawValue))
         var failure = DDCError.noReply
         for attempt in 1...max(1, timing.readAttempts) {
+            try Task.checkCancellation()
             let payload: [UInt8]?
             do {
                 payload = try exchange(frame)
@@ -148,14 +178,22 @@ public actor DDCChannel: DDCDevice {
             guard let payload else { continue }
             switch VCPRequest.parseReply(payload, expectedCode: code.rawValue) {
             case .value(let reading):
+                consecutiveFailedReads = 0
                 return reading
             case .unsupported:
+                consecutiveFailedReads = 0
                 throw DDCError.unsupported(code)
             case nil:
                 Log.ddc.debug("\(self.label, privacy: .public) get \(code, privacy: .public) attempt \(attempt): unexpected payload \(payload.hexString, privacy: .public)")
             }
         }
         Log.ddc.error("\(self.label, privacy: .public) get \(code, privacy: .public) failed: \(String(describing: failure), privacy: .public)")
+        consecutiveFailedReads += 1
+        if consecutiveFailedReads >= timing.reopenAfterFailedReads {
+            Log.ddc.info("\(self.label, privacy: .public) reopening after \(self.consecutiveFailedReads) unanswered reads")
+            bus = nil
+            consecutiveFailedReads = 0
+        }
         throw failure
     }
 
@@ -240,11 +278,21 @@ public actor DDCChannel: DDCDevice {
 
 /// Reads the whole capabilities string, one fragment per transaction, so that
 /// other commands can run between fragments instead of waiting seconds.
+///
+/// If a fragment fails after others arrived, what arrived is returned, as
+/// `glim caps` does: the parser copes with a truncated string, and part of a
+/// display's self-description beats none.
 public func readCapabilities(from device: any DDCDevice, maximumLength: Int = 4096) async throws -> String {
     var bytes: [UInt8] = []
     while bytes.count < maximumLength {
         try Task.checkCancellation()
-        let fragment = try await device.capabilitiesFragment(at: UInt16(bytes.count))
+        let fragment: [UInt8]
+        do {
+            fragment = try await device.capabilitiesFragment(at: UInt16(bytes.count))
+        } catch let error as DDCError where !bytes.isEmpty {
+            Log.ddc.notice("capabilities stopped at \(bytes.count) bytes: \(String(describing: error), privacy: .public)")
+            break
+        }
         if fragment.isEmpty { break }
         bytes.append(contentsOf: fragment)
     }

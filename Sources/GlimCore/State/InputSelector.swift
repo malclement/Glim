@@ -9,9 +9,16 @@ import Observation
 @Observable
 public final class InputSelector {
     public let options: [InputOption]
-    public let control: DeviceControl<UInt16>
+    /// Internal, so that nothing outside GlimCore can write an input without
+    /// going through ``request(_:)`` and ``confirm()``.
+    let control: DeviceControl<UInt16>
     /// The input picked but not yet confirmed.
     public private(set) var pendingSelection: InputOption?
+
+    /// The active input's raw value. nil until it has been read.
+    public var value: UInt16? { control.value }
+    public var failure: ControlFailure? { control.failure }
+    public var isWriting: Bool { control.isWriting }
 
     public init(options: [InputOption], control: DeviceControl<UInt16>) {
         self.options = options
@@ -30,8 +37,10 @@ public final class InputSelector {
     }
 
     /// Stages a switch for confirmation. Picking the active input clears it.
+    /// "Active" is what the monitor last reported, not what was last asked
+    /// for, so a switch that failed can be asked for again.
     public func request(_ option: InputOption) {
-        pendingSelection = option.value == control.value ? nil : option
+        pendingSelection = option.value == (control.deviceValue ?? control.value) ? nil : option
     }
 
     /// Sends the staged switch.

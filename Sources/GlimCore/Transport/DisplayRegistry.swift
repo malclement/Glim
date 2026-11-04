@@ -81,50 +81,72 @@ public struct DiscoveredDisplay: Hashable, Sendable {
 /// prefix rather than on enumeration order. Verified on macOS 26.5, M4.
 public enum DisplayRegistry {
     public static func externalDisplays() -> [DiscoveredDisplay] {
-        let framebuffers = externalFramebuffers()
-        var displays: [DiscoveredDisplay] = []
+        var proxies: [Proxy] = []
         forEachService(matching: "DCPAVServiceProxy") { proxy in
             guard property("Location", of: proxy) as? String == "External" else { return }
             let pipe = parentName(of: proxy)?.split(separator: ":").first.map(String.init)
-            displays.append(DiscoveredDisplay(
-                serviceID: registryID(of: proxy),
-                framebuffer: pipe,
-                identity: pipe.flatMap { framebuffers[$0] }
-            ))
+            proxies.append(Proxy(serviceID: registryID(of: proxy), pipe: pipe))
         }
-        pairByElimination(&displays, framebuffers: framebuffers)
+        let displays = pair(proxies, with: externalFramebuffers())
         Log.discovery.info("found \(displays.count) external DDC display(s)")
+        return displays
+    }
+
+    /// A `DCPAVServiceProxy` and the display pipe its parent's name points to.
+    struct Proxy: Equatable {
+        var serviceID: UInt64
+        var pipe: String?
+    }
+
+    /// Joins transports to framebuffers by display pipe.
+    ///
+    /// `framebuffers` maps every *external* pipe to its EDID identity, nil
+    /// while the EDID is not published yet. A proxy whose pipe is known gets
+    /// that pipe's identity, even nil: the next rescan fills it in. Only a
+    /// proxy whose name matches no framebuffer at all (the naming convention
+    /// broke) is paired by elimination, and only when exactly one such proxy
+    /// and one unclaimed framebuffer with an identity are left.
+    static func pair(_ proxies: [Proxy], with framebuffers: [String: DisplayIdentity?]) -> [DiscoveredDisplay] {
+        var displays = proxies.map { proxy -> DiscoveredDisplay in
+            guard let pipe = proxy.pipe, let identity = framebuffers[pipe] else {
+                return DiscoveredDisplay(serviceID: proxy.serviceID)
+            }
+            return DiscoveredDisplay(serviceID: proxy.serviceID, framebuffer: pipe, identity: identity)
+        }
+        let orphans = displays.indices.filter { displays[$0].framebuffer == nil }
+        let claimed = Set(displays.compactMap(\.framebuffer))
+        let spare = framebuffers.compactMap { pipe, identity -> (String, DisplayIdentity)? in
+            guard !claimed.contains(pipe), let identity else { return nil }
+            return (pipe, identity)
+        }
+        if orphans.count == 1, spare.count == 1, let index = orphans.first, let (pipe, identity) = spare.first {
+            Log.discovery.notice("paired \(pipe, privacy: .public) with a proxy by elimination")
+            displays[index].framebuffer = pipe
+            displays[index].identity = identity
+        }
         return displays.sorted { ($0.framebuffer ?? "~", $0.serviceID) < ($1.framebuffer ?? "~", $1.serviceID) }
     }
 
-    /// If the naming convention ever changes, one unmatched proxy and one
-    /// unmatched framebuffer can still only belong together.
-    private static func pairByElimination(_ displays: inout [DiscoveredDisplay], framebuffers: [String: DisplayIdentity]) {
-        let unmatched = displays.indices.filter { displays[$0].identity == nil }
-        let used = Set(displays.compactMap(\.framebuffer))
-        let spare = framebuffers.filter { !used.contains($0.key) }
-        guard unmatched.count == 1, spare.count == 1, let (pipe, identity) = spare.first,
-              let index = unmatched.first else { return }
-        Log.discovery.notice("paired \(pipe, privacy: .public) with a proxy by elimination")
-        displays[index].framebuffer = pipe
-        displays[index].identity = identity
-    }
-
-    /// Display-pipe name (for example "dispext0") to EDID identity, for every
-    /// framebuffer that has one.
-    static func externalFramebuffers() -> [String: DisplayIdentity] {
-        var result: [String: DisplayIdentity] = [:]
+    /// Every external display pipe (for example "dispext0") and the EDID
+    /// identity of its framebuffer, nil when it has none yet. The built-in
+    /// panel's pipe (`disp0`) is left out.
+    static func externalFramebuffers() -> [String: DisplayIdentity?] {
+        var result: [String: DisplayIdentity?] = [:]
         var seen = Set<UInt64>()
         // IOMobileFramebuffer matches its subclasses: IOMobileFramebufferShim
         // on current macOS, AppleCLCD2 on older releases.
         for className in ["IOMobileFramebuffer", "AppleCLCD2"] {
             forEachService(matching: className) { framebuffer in
                 guard seen.insert(registryID(of: framebuffer)).inserted,
-                      let pipe = parentName(of: framebuffer),
-                      let attributes = property("DisplayAttributes", of: framebuffer) as? [String: Any],
-                      let product = attributes["ProductAttributes"] as? [String: Any],
-                      let identity = identity(from: product) else { return }
-                result[pipe] = identity
+                      let pipe = parentName(of: framebuffer) else { return }
+                // Two independent signs of an external pipe, so that either
+                // one changing in a future release is not enough to let the
+                // built-in panel in.
+                let flagged = (property("external", of: framebuffer) as? NSNumber)?.boolValue == true
+                guard flagged || pipe.hasPrefix("dispext") else { return }
+                let attributes = property("DisplayAttributes", of: framebuffer) as? [String: Any]
+                let product = attributes?["ProductAttributes"] as? [String: Any]
+                result[pipe] = product.flatMap(identity(from:))
             }
         }
         return result

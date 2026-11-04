@@ -100,7 +100,11 @@ public final class DeviceControl<Value: Sendable & Equatable> {
     @ObservationIgnored private var writer: Task<Void, Never>?
     @ObservationIgnored private var reconciler: Task<Void, Never>?
     @ObservationIgnored private var invalidated = false
-    /// Tells the owning monitor whether an operation reached the device.
+    /// The last write failed and nothing has succeeded since. The warning
+    /// stays up even after a read-back shows the old value, so a rejected
+    /// change never vanishes without a word.
+    @ObservationIgnored private var lastWriteFailed = false
+    /// Tells the owning monitor whether a read reached the device.
     @ObservationIgnored var onLinkOutcome: (@MainActor (Result<Void, any Error>) -> Void)?
 
     public init(backend: ControlBackend<Value>, timing: ControlTiming = .standard,
@@ -134,8 +138,16 @@ public final class DeviceControl<Value: Sendable & Equatable> {
 
     /// Call when a drag starts and ends. Reads are held off during a drag.
     public func setEditing(_ editing: Bool) {
+        guard editing != isEditing else { return }
         isEditing = editing
         if !editing, writer == nil { scheduleReconcile() }
+    }
+
+    /// Ends a drag the UI can no longer finish, for example because the menu
+    /// closed or the slider was removed mid-drag (SwiftUI then never sends the
+    /// end of it). Without this, reads would stay held off for good.
+    public func endInteraction() {
+        setEditing(false)
     }
 
     // MARK: Device state
@@ -168,10 +180,17 @@ public final class DeviceControl<Value: Sendable & Equatable> {
                 // means the bus took the frame. Only a read reports the link as
                 // healthy.
                 lastWritten = target
+                lastWriteFailed = false
                 failure = nil
             } catch {
+                // A dead control's late failure, from a transport that has
+                // since been replaced, says nothing about the monitor now.
+                guard !invalidated, !(error is CancellationError) else { continue }
+                // Shown on this control only. Whether the monitor as a whole
+                // answers is for the read-back to tell: a single dropped write
+                // must not swap the controls out from under a drag.
+                lastWriteFailed = true
                 failure = ControlFailure(error)
-                if backend.reportsLinkStatus { onLinkOutcome?(.failure(error)) }
             }
         }
         writer = nil
@@ -207,10 +226,13 @@ public final class DeviceControl<Value: Sendable & Equatable> {
             deviceValue = reading.value
             value = reading.value
             lastWritten = reading.value
-            failure = nil
+            if !lastWriteFailed { failure = nil }
             if backend.reportsLinkStatus { onLinkOutcome?(.success(())) }
         } catch {
-            guard !invalidated, generation == expected else { return }
+            // Same rule as a successful read: what happened since it was
+            // issued wins, and a drag in progress is left alone.
+            guard !invalidated, generation == expected, writer == nil, !isEditing,
+                  !(error is CancellationError) else { return }
             failure = ControlFailure(error)
             if backend.reportsLinkStatus { onLinkOutcome?(.failure(error)) }
         }
@@ -245,10 +267,11 @@ extension ControlBackend where Value == Double {
 }
 
 extension ControlBackend where Value == Bool {
-    /// VCP 0x8D: 1 mutes, 2 unmutes.
+    /// VCP 0x8D: 1 mutes, 2 unmutes, in the low byte (MCCS uses the high
+    /// byte for screen blanking).
     public static func vcpMute(on device: any DDCDevice) -> ControlBackend<Bool> {
         ControlBackend(
-            read: { DeviceReading(value: try await device.read(.audioMute).current == 1) },
+            read: { DeviceReading(value: try await device.read(.audioMute).current & 0xFF == 1) },
             write: { try await device.write(.audioMute, value: $0 ? 1 : 2) }
         )
     }
@@ -263,10 +286,12 @@ extension ControlBackend where Value == Bool {
 }
 
 extension ControlBackend where Value == UInt16 {
-    /// A non-continuous VCP code, such as the input source.
+    /// A non-continuous VCP code, such as the input source. MCCS puts its
+    /// value in the low byte; some displays use the high byte for something
+    /// else, so it is ignored.
     public static func vcpChoice(_ code: VCPCode, on device: any DDCDevice) -> ControlBackend<UInt16> {
         ControlBackend(
-            read: { DeviceReading(value: try await device.read(code).current) },
+            read: { DeviceReading(value: try await device.read(code).current & 0xFF) },
             write: { try await device.write(code, value: $0) }
         )
     }

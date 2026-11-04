@@ -19,13 +19,15 @@ public enum DDCError: Error, Equatable, Sendable {
     case unsupported(VCPCode)
     /// The operation did not finish in time.
     case timedOut
+    /// Glim does not write this code (see ``DDCChannel/writableCodes``).
+    case refused(VCPCode)
 
     /// Errors that say something about the link rather than about the
     /// request, so a later attempt may succeed.
     public var isTransient: Bool {
         switch self {
         case .writeFailed, .readFailed, .noReply, .timedOut, .serviceUnavailable: true
-        case .transportUnavailable, .unsupported: false
+        case .transportUnavailable, .unsupported, .refused: false
         }
     }
 }
@@ -45,6 +47,8 @@ extension DDCError: LocalizedError {
             "The display doesn't support control \(code)."
         case .timedOut:
             "The display took too long to respond."
+        case .refused(let code):
+            "Glim doesn't change control \(code)."
         }
     }
 }
