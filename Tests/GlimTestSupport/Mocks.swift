@@ -85,6 +85,8 @@ package final class FakePlatform: MonitorPlatform {
         package var onChange: (@MainActor () -> Void)?
         /// Devices to use instead of a simulated display, by service ID.
         package var devices: [UInt64: any DDCDevice] = [:]
+        package var discoveries = 0
+        package var devicesMade = 0
     }
 
     package let state = OSAllocatedUnfairLock(initialState: State())
@@ -124,10 +126,14 @@ package final class FakePlatform: MonitorPlatform {
     }
 
     package func discoverDisplays() async -> [DiscoveredDisplay] {
-        state.withLock(\.displays)
+        state.withLock { state in
+            state.discoveries += 1
+            return state.displays
+        }
     }
 
     package func makeDevice(for display: DiscoveredDisplay) -> any DDCDevice {
+        state.withLock { $0.devicesMade += 1 }
         if let device = state.withLock({ $0.devices[display.serviceID] }) { return device }
         let simulated = state.withLock { $0.simulated[display.serviceID] } ?? SimulatedDisplay { $0.silent = true }
         return DDCChannel.simulated(simulated)

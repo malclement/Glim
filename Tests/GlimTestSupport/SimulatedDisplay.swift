@@ -1,3 +1,4 @@
+import Dispatch
 import os
 import GlimCore
 
@@ -38,6 +39,14 @@ package final class SimulatedDisplay: Sendable {
         /// The first Get of a code after a Set of it reads 0 (an HP quirk).
         package var zeroAfterSet = false
         package var zeroPending: Set<UInt8> = []
+        /// Capabilities requests get no answer, while Gets still work.
+        package var capabilitiesSilent = false
+        /// Capabilities fragments at or past this offset get no answer.
+        package var capabilitiesFailFrom: Int?
+        /// Frames that arrived between another request and the read of its
+        /// reply: two transactions overlapping on the bus.
+        package var interleaved = 0
+        package var awaitingReplyTo: [UInt8]?
     }
 
     package let state: OSAllocatedUnfairLock<State>
@@ -91,7 +100,11 @@ package final class SimulatedDisplay: Sendable {
                 state.badChecksums += 1
                 return .success(())
             }
+            // The repeat of the same request is part of one transaction;
+            // anything else before the reply is read is another transaction.
+            if let pending = state.awaitingReplyTo, pending != frame { state.interleaved += 1 }
             Self.handle(frame, in: &state)
+            state.awaitingReplyTo = state.reply == nil ? nil : frame
             return .success(())
         }.get()
     }
@@ -117,6 +130,10 @@ package final class SimulatedDisplay: Sendable {
             if state.zeroAfterSet { state.zeroPending.insert(code) }
         case 0xF3 where payload.count == 3:
             let offset = Int(payload[1]) << 8 | Int(payload[2])
+            if state.capabilitiesSilent || state.capabilitiesFailFrom.map({ offset >= $0 }) == true {
+                state.reply = nil
+                break
+            }
             let fragment = state.capabilities.dropFirst(offset).prefix(32)
             state.reply = Self.reply([0xE3, payload[1], payload[2]] + fragment)
         default:
@@ -126,6 +143,7 @@ package final class SimulatedDisplay: Sendable {
 
     fileprivate func send(length: Int) throws(DDCError) -> [UInt8] {
         try state.withLock { state -> Result<[UInt8], DDCError> in
+            state.awaitingReplyTo = nil
             if state.readsFail { return .failure(.readFailed(-1)) }
             let reply = state.silent ? Self.reply([]) : (state.reply ?? Self.reply([]))
             var bytes = reply
@@ -168,5 +186,58 @@ extension DDCChannel {
         DDCChannel(label: "test", timing: timing) { () throws(DDCError) -> any DDCBus in
             display.openBus()
         }
+    }
+}
+
+/// Freezes a channel's queue inside a bus read, the way a stuck I2C call
+/// would, until released.
+package final class BusGate: Sendable {
+    private let state = OSAllocatedUnfairLock(initialState: (armed: false, blocked: 0))
+    private let semaphore = DispatchSemaphore(value: 0)
+
+    package init() {}
+
+    /// The next read blocks.
+    package func arm() {
+        state.withLock { $0.armed = true }
+    }
+
+    /// How many reads have blocked so far.
+    package var blocked: Int {
+        state.withLock { $0.blocked }
+    }
+
+    package func release() {
+        semaphore.signal()
+    }
+
+    fileprivate func pass() {
+        let wait = state.withLock { state -> Bool in
+            guard state.armed else { return false }
+            state.armed = false
+            state.blocked += 1
+            return true
+        }
+        if wait { semaphore.wait() }
+    }
+}
+
+/// A simulated display's bus whose reads can be frozen by a ``BusGate``.
+package final class BlockingBus: DDCBus {
+    private let inner: SimulatedBus
+    private let gate: BusGate
+
+    package init(display: SimulatedDisplay, gate: BusGate) {
+        inner = display.openBus()
+        self.gate = gate
+    }
+
+    package func write(_ frame: [UInt8]) throws(DDCError) {
+        try inner.write(frame)
+    }
+
+    package func read(length: Int) throws(DDCError) -> [UInt8] {
+        gate.pass()
+        return try inner.read(length: length)
     }
 }

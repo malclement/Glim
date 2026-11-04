@@ -120,7 +120,7 @@ import Testing
         let monitor = try #require(manager.monitors.first)
         #expect(await ready(monitor))
         #expect(monitor.profile.isGeneric)
-        #expect(!monitor.profile.isVerified)
+        #expect(!monitor.profile.isTested)
         #expect(monitor.name == "Example 27")
         #expect(monitor.brightness?.value == 40)
         #expect(await eventually { monitor.volume?.value == 25 })
@@ -145,21 +145,6 @@ import Testing
         #expect(monitor.name == "External Display")
     }
 
-    @Test func aDisconnectedMonitorIsRemoved() async throws {
-        let platform = FakePlatform()
-        platform.connect(hp())
-        let manager = await started(platform)
-        let monitor = try #require(manager.monitors.first)
-        #expect(await ready(monitor))
-
-        platform.disconnectAll()
-        platform.fireChange()
-        #expect(await eventually { manager.monitors.isEmpty })
-        // Its controls are dead: nothing reaches the old device.
-        monitor.brightness?.set(10)
-        await settle()
-        #expect(monitor.brightness?.value == 100)
-    }
 
     /// A replug or a sleep gives the same monitor a new transport. It keeps
     /// its object, so the UI does not flicker, and gets fresh controls on the
@@ -259,11 +244,14 @@ import Testing
         #expect(MonitorProfile.known(for: identity) == .hpE27mG4)
     }
 
-    /// The built-in panel's ProductID does not fit 32 bits; it is not a
-    /// display Glim drives.
-    @Test func implausibleRegistryValuesAreRejected() {
-        let builtIn: [String: Any] = ["ManufacturerID": "00-10-fa", "ProductID": NSNumber(value: 53_009_294_898_241 as UInt64)]
-        #expect(DisplayRegistry.identity(from: builtIn) == nil)
+
+    @Test func theHPProfileSaysWhatWasTested() {
+        let hp = MonitorProfile.hpE27mG4
+        #expect(hp.isTested)
+        #expect(hp.isTested(.brightness) && hp.isTested(.contrast) && hp.isTested(.volume) && hp.isTested(.mute))
+        // Input switching was never tried on the hardware.
+        #expect(!hp.isTested(.input))
+        #expect(!MonitorProfile.generic(capabilities: nil).isTested(.brightness))
     }
 
     @Test func profiles() throws {

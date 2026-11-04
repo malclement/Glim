@@ -58,6 +58,18 @@ import Testing
         #expect(MonitorCapabilities(parsing: "").vcp.isEmpty)
     }
 
+    @Test func bytesAfterTheClosingParenthesisAreIgnored() throws {
+        let caps = MonitorCapabilities(parsing: (try Fixtures.hpCapabilities()) + "??\u{0}junk")
+        #expect(caps.model == "HP E27m G4")
+        #expect(caps.vcp.count == 46)
+    }
+
+    @Test func fieldsAfterAnEarlyCloseAreKept() {
+        let caps = MonitorCapabilities(parsing: "(prot(monitor)type(LCD))vcp(10 12)")
+        #expect(caps.displayType == "LCD")
+        #expect(caps.vcp.map(\.code) == [0x10, 0x12])
+    }
+
     @Test func oddTrailingDigitIsDropped() {
         #expect(MonitorCapabilities.parseEntries("10 1").map(\.code) == [0x10])
     }

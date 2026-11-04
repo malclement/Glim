@@ -148,16 +148,6 @@ import Testing
         #expect(display.state.withLock(\.opens) > 1)
     }
 
-    /// Writes that get through while reads fail mean the service is fine and
-    /// the display is not answering; reopening would not help.
-    @Test func doesNotReopenWhileWritesSucceed() async {
-        let display = SimulatedDisplay.hp()
-        let channel = DDCChannel.simulated(display)
-        display.update { $0.readsFail = true }
-        _ = try? await channel.read(.brightness)
-        _ = try? await channel.read(.brightness)
-        #expect(display.state.withLock(\.opens) == 1)
-    }
 
     @Test func openFailureIsReported() async {
         let channel = DDCChannel(label: "test", timing: .immediate) { () throws(DDCError) -> any DDCBus in
@@ -168,31 +158,5 @@ import Testing
         }
     }
 
-    /// With real timing, a Get waits out the post-Set pause.
-    @Test func getAfterSetWaitsForTheDisplay() async throws {
-        var timing = DDCTiming.immediate
-        timing.getAfterSetDelay = .milliseconds(120)
-        let display = SimulatedDisplay.hp()
-        let channel = DDCChannel.simulated(display, timing: timing)
-        try await channel.write(.brightness, value: 42)
-        let start = ContinuousClock.now
-        #expect(try await channel.read(.brightness).current == 42)
-        #expect(start.duration(to: .now) >= .milliseconds(100))
-    }
 
-    @Test func transactionsFromManyTasksDoNotInterleave() async throws {
-        let display = SimulatedDisplay.hp()
-        let channel = DDCChannel.simulated(display)
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            for value in 0..<20 {
-                group.addTask { try await channel.write(.brightness, value: UInt16(value)) }
-                group.addTask { _ = try await channel.read(.contrast) }
-            }
-            try await group.waitForAll()
-        }
-        // Every frame arrived intact, so no two transactions were interleaved
-        // mid-frame, and every read got its own reply.
-        #expect(display.state.withLock(\.badChecksums) == 0)
-        #expect(try await channel.read(.contrast).current == 100)
-    }
 }

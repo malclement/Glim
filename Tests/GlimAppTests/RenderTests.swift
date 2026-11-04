@@ -28,7 +28,7 @@ import Testing
     private func started(_ platform: FakePlatform) async -> MonitorManager {
         let manager = MonitorManager(platform: platform)
         manager.start()
-        _ = await eventually { !manager.isDiscovering }
+        #expect(await eventually { !manager.isDiscovering })
         return manager
     }
 
@@ -65,7 +65,7 @@ import Testing
     @Test func menuWithTheSpeakersMuted() async throws {
         let (manager, monitor) = try await readyHP()
         monitor.mute?.set(true)
-        _ = await eventually { monitor.mute?.value == true && monitor.mute?.isWriting == false }
+        #expect(await eventually { monitor.mute?.value == true && monitor.mute?.isWriting == false })
         try snapshot(MenuContentView(manager: manager), "menu-muted")
     }
 
@@ -73,7 +73,7 @@ import Testing
         let platform = FakePlatform()
         platform.connect(hp(), simulated: SimulatedDisplay { $0.silent = true })
         let manager = await started(platform)
-        _ = await eventually { manager.monitors.first?.status == .notResponding }
+        #expect(await eventually { manager.monitors.first?.status == .notResponding })
         try snapshot(MenuContentView(manager: manager), "menu-not-responding")
     }
 
@@ -101,7 +101,7 @@ import Testing
                                            identity: DisplayIdentity(vendorID: 0x10AC, productID: 0x4242)), simulated: simulated)
         let manager = await started(platform)
         let monitor = try #require(manager.monitors.first)
-        _ = await eventually { monitor.volume?.value != nil && monitor.input?.current != nil }
+        #expect(await eventually { monitor.volume?.value != nil && monitor.input?.current != nil })
         try snapshot(MenuContentView(manager: manager), "menu-untested")
     }
 
@@ -111,7 +111,7 @@ import Testing
         let second = DisplayIdentity(vendorID: 0x220E, productID: 0x3753, alphanumericSerial: "TEST0000002", productName: "HP E27m G4")
         platform.connect(DiscoveredDisplay(serviceID: 2, framebuffer: "dispext1", identity: second))
         let manager = await started(platform)
-        _ = await eventually { manager.monitors.allSatisfy { $0.input?.current != nil } }
+        #expect(await eventually { manager.monitors.count == 2 && manager.monitors.allSatisfy { $0.input?.current != nil } })
         try snapshot(MenuContentView(manager: manager), "menu-two-monitors")
     }
 
@@ -133,6 +133,30 @@ import Testing
         try snapshot(MenuContentView(manager: manager), "menu-unavailable")
     }
 
+    @Test func menuWithAControlThatFailed() async throws {
+        let platform = FakePlatform()
+        let simulated = platform.connect(hp())
+        platform.addAudio(hpAudio)
+        let manager = await started(platform)
+        let monitor = try #require(manager.monitors.first)
+        #expect(await eventually { monitor.brightness?.value != nil && monitor.input?.current != nil })
+        simulated.update { $0.failNextWrites = 2 }
+        monitor.brightness?.set(40)
+        #expect(await eventually { monitor.brightness?.failure != nil && monitor.brightness?.isWriting == false })
+        try snapshot(MenuContentView(manager: manager), "menu-control-failed")
+    }
+
+    /// DDC is silent but the USB speakers still answer: their row stays.
+    @Test func menuWithSpeakersWhileDDCIsSilent() async throws {
+        let platform = FakePlatform()
+        platform.connect(hp(), simulated: SimulatedDisplay { $0.silent = true })
+        platform.addAudio(hpAudio)
+        let manager = await started(platform)
+        let monitor = try #require(manager.monitors.first)
+        #expect(await eventually { monitor.status == .notResponding && monitor.volume?.value != nil })
+        try snapshot(MenuContentView(manager: manager), "menu-not-responding-speakers")
+    }
+
     // MARK: Settings
 
     @Test func settingsPanes() async throws {
@@ -146,7 +170,7 @@ import Testing
         let (manager, _) = try await readyHP()
         let report = manager.diagnosticsReport(appVersion: "test")
         #expect(report.contains("HP E27m G4"))
-        #expect(report.contains("profile: hp-e27m-g4 (verified)"))
+        #expect(report.contains("profile: hp-e27m-g4 (tested; untested: input)"))
         #expect(report.contains("serial present"))
         #expect(!report.contains("TEST0000001"))
     }
