@@ -7,7 +7,7 @@ APP           = dist/$(APP_NAME).app
 ARCH          = arm64
 # DDC/CI goes through IOAVService, which exists only on Apple silicon, so the
 # app is built for arm64 alone.
-SWIFT_RELEASE = swift build -c release --arch $(ARCH)
+SWIFT_RELEASE = swift build -c release --arch $(ARCH) --product $(APP_NAME)
 BIN_DIR       = $(shell $(SWIFT_RELEASE) --show-bin-path)
 ENTITLEMENTS  = Support/Glim.entitlements
 VERSION       = $(shell /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Support/Info.plist)
