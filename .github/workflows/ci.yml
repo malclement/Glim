@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# An explicit bash runs steps with -eo pipefail; the implicit default is only -e.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build, test and package
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      # Pinned so the toolchain only changes in a commit, never under one.
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # GitHub reports a malformed workflow only when it is triggered, as an
+      # opaque "workflow file issue". release.yml runs only on tags, so parse
+      # every workflow here, where a mistake fails the pull request instead.
+      # Ruby, because it ships on the runner with YAML in its standard library;
+      # PyYAML does not.
+      - name: Validate workflow files
+        run: |
+          # shellcheck disable=SC2016 # #{...} is Ruby interpolation
+          ruby -ryaml -e '
+            bad = false
+            paths = Dir.glob(".github/workflows/*.{yml,yaml}").sort
+            abort "::error::no workflow files found" if paths.empty?
+            paths.each do |path|
+              errors = []
+              begin
+                doc = YAML.safe_load(File.read(path), aliases: true)
+              rescue StandardError => e
+                errors << "unparseable: #{e.message}"
+              end
+              if errors.empty?
+                if !doc.is_a?(Hash)
+                  errors << "not a mapping"
+                else
+                  # YAML 1.1 reads a bare `on:` key as the boolean true.
+                  errors << "no trigger (on:)" unless doc.key?("on") || doc.key?(true)
+                  jobs = doc["jobs"]
+                  if !jobs.is_a?(Hash) || jobs.empty?
+                    errors << "no jobs"
+                  else
+                    jobs.each do |id, job|
+                      next if job.is_a?(Hash) && job["uses"]
+                      ok = job.is_a?(Hash) && job["runs-on"] && job["steps"].is_a?(Array) && !job["steps"].empty?
+                      errors << "job #{id} needs runs-on and steps" unless ok
+                    end
+                  end
+                end
+              end
+              errors.each { |message| puts "::error file=#{path}::#{message}" }
+              puts "#{path}: ok" if errors.empty?
+              bad ||= !errors.empty?
+            end
+            exit(bad ? 1 : 0)
+          '
+
+      # The release scripts run only when a tag is pushed; catch syntax errors now.
+      - name: Check shell script syntax
+        run: |
+          for script in scripts/*.sh; do
+            bash -n "$script"
+            echo "$script: ok"
+          done
+
+      - name: Toolchain
+        run: |
+          swift --version
+          echo "SDK $(xcrun --show-sdk-version)"
+
+      - name: Build and test
+        run: make check
+
+      - name: Build the DMG (ad-hoc signed)
+        run: make dmg
+
+      - name: Report signing status
+        run: make verify
+
+      - name: Upload the DMG
+        uses: actions/upload-artifact@v5
+        with:
+          name: Glim-dmg
+          path: dist/Glim-*.dmg
+          if-no-files-found: error
+          retention-days: 14
