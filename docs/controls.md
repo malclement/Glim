@@ -8,7 +8,7 @@ This is the complete catalog of what a host can change or read on this monitor o
 2. **Full GET scan of all 256 codes.** Every code answered with either `ok` (49 codes) or `unsupported` (207). None failed to reply, so the set of plainly readable codes is complete ([`data/scan-all.txt`](../data/scan-all.txt)).
 3. **Set, read back, restore** on every standard code that is safe to write, with diffs of all 49 readable codes ([`data/write-tests-2026-11-04.md`](../data/write-tests-2026-11-04.md)).
 4. **Standards.** VESA MCCS 2.2a and DDC/CI 1.1 for the standard codes.
-5. **HP's own control tables**, taken from HP Display Center 2.4.4.7 (Windows). The app was taken apart, not run. Its tables give every HP feature name, VCP code, sub-code and value name. They are in [`data/hp-display-center-features.txt`](../data/hp-display-center-features.txt) and [`data/hp-display-center-values.txt`](../data/hp-display-center-values.txt). This is the only source for the HP-specific codes.
+5. **HP's own control tables**, read out of HP Display Center 2.4.4.7 (Windows). The app was taken apart, not run. Its tables give every HP feature name, VCP code, sub-code and value name, and they are the only source for the HP-specific codes below. The tables themselves are HP's and are not included in this repository.
 
 **Status markers**
 
