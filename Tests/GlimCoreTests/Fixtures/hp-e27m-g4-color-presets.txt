@@ -1,0 +1,23 @@
+# HP E27m G4, firmware 1.0, over USB-C. One code set, then 0x14 and 0x0C
+# read back; every reading was stable over three reads. Values are decimal.
+# Source: docs/controls.md, "0x14 color-preset mapping", and the 0x0C
+# coupling notes below it. Measured 2026-11-04.
+#
+# set     reads
+14=1      14=1   0C=0
+14=2      14=10  0C=0
+14=3      14=3   0C=0
+14=4      14=5   0C=40
+14=5      14=8   0C=70
+14=6      14=6   0C=0
+14=7      14=6   0C=0
+14=8      14=2   0C=126
+14=9      14=2   0C=126
+14=10     14=11  0C=0
+14=11     14=15  0C=0
+14=12     14=2   0C=0
+14=13     14=4   0C=0
+0C=0      14=15
+0C=40     14=5
+0C=55     14=8
+0C=100    14=2

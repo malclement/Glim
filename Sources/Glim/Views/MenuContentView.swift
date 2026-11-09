@@ -4,6 +4,14 @@ import SwiftUI
 /// The menu bar window.
 struct MenuContentView: View {
     let manager: MonitorManager
+    @Environment(\.glimStore) private var store
+    @AppStorage(Preferences.showScenes) private var showScenes = true
+
+    /// The displays the menu shows: all of them, less those hidden in the
+    /// window.
+    private var shownMonitors: [Monitor] {
+        manager.monitors.filter { store?.showsInMenu($0.id) ?? true }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -51,14 +59,66 @@ struct MenuContentView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 14) {
-                    ForEach(manager.monitors) { monitor in
-                        MonitorSectionView(monitor: monitor, title: manager.title(for: monitor))
-                        if monitor.id != manager.monitors.last?.id {
+                    if shownMonitors.isEmpty {
+                        Text("Every display is hidden from the menu. Show them again in Glim's window.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    ForEach(shownMonitors) { monitor in
+                        MonitorSectionView(monitor: monitor, title: store?.title(for: monitor, in: manager) ?? manager.title(for: monitor))
+                        if monitor.id != shownMonitors.last?.id {
                             Divider()
                         }
                     }
+                    if showScenes, let store, !store.scenes.isEmpty {
+                        Divider()
+                        SceneMenuSection(store: store, manager: manager)
+                    }
                 }
             }
+        }
+    }
+}
+
+/// The scenes, each applied in one click. The active one is ticked.
+private struct SceneMenuSection: View {
+    let store: GlimStore
+    let manager: MonitorManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Scenes")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 2)
+            ForEach(store.scenes) { scene in
+                let isActive = scene.isActive(on: manager.monitors)
+                let digit = store.shortcutDigit(for: scene.id)
+                MenuRowButton(title: scene.name, shortcut: digit.map { "⌘\($0)" }, isChecked: isActive,
+                              symbol: scene.shownSymbol) {
+                    scene.apply(to: manager.monitors)
+                }
+                .modifier(SceneShortcut(digit: digit))
+                .disabled(scene.connected(in: manager.monitors).isEmpty)
+                .accessibilityValue(isActive ? "Active" : "")
+            }
+        }
+        // The rows' own padding lines their text up with the controls above.
+        .padding(.horizontal, -8)
+    }
+}
+
+/// ⌘1 to ⌘9 for the first nine scenes; nothing for the rest.
+struct SceneShortcut: ViewModifier {
+    let digit: Int?
+
+    func body(content: Content) -> some View {
+        if let digit, let key = String(digit).first {
+            content.keyboardShortcut(KeyEquivalent(key), modifiers: .command)
+        } else {
+            content
         }
     }
 }
@@ -119,29 +179,51 @@ private struct MenuFooter: View {
 struct MenuRowButton: View {
     let title: String
     var shortcut: String?
+    /// nil for a row that is never ticked; otherwise a column is kept for
+    /// the tick, so ticked and unticked titles line up.
+    var isChecked: Bool?
+    /// A symbol before the title, in a column of its own.
+    var symbol: String?
     let action: () -> Void
     @State private var isHovered = false
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: action) {
-            HStack {
+            HStack(spacing: 6) {
+                if let isChecked {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.semibold))
+                        .opacity(isChecked ? 1 : 0)
+                        .frame(width: 12)
+                        .accessibilityHidden(true)
+                }
+                if let symbol {
+                    Image(systemName: symbol)
+                        .frame(width: 18)
+                        .foregroundStyle(isHighlighted ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                        .accessibilityHidden(true)
+                }
                 Text(title)
+                    .lineLimit(1)
                 Spacer()
                 if let shortcut {
                     Text(shortcut)
-                        .foregroundStyle(isHovered ? AnyShapeStyle(.white.opacity(0.85)) : AnyShapeStyle(.tertiary))
+                        .foregroundStyle(isHighlighted ? AnyShapeStyle(.white.opacity(0.85)) : AnyShapeStyle(.tertiary))
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .foregroundStyle(isHovered ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+            .foregroundStyle(isHighlighted ? AnyShapeStyle(.white) : AnyShapeStyle(isEnabled ? .primary : .tertiary))
             .background {
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(isHovered ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear))
+                    .fill(isHighlighted ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear))
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
     }
+
+    private var isHighlighted: Bool { isHovered && isEnabled }
 }

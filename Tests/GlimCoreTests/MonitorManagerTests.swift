@@ -249,8 +249,10 @@ import Testing
         let hp = MonitorProfile.hpE27mG4
         #expect(hp.isTested)
         #expect(hp.isTested(.brightness) && hp.isTested(.contrast) && hp.isTested(.volume) && hp.isTested(.mute))
-        // Input switching was never tried on the hardware.
+        // Input switching was never tried on the hardware, and the color
+        // controls only by the CLI, not yet by the app.
         #expect(!hp.isTested(.input))
+        #expect(!hp.isTested(.colorTemperature) && !hp.isTested(.colorPreset))
         #expect(!MonitorProfile.generic(capabilities: nil).isTested(.brightness))
     }
 
@@ -262,6 +264,13 @@ import Testing
         #expect(generic.isGeneric)
         #expect(generic.volume == .ddc)
         #expect(generic.inputs?.map(\.name) == ["DisplayPort 1", "HDMI 1", "Input 0x13"])
+        // The HP lists 0x0C but not 0x14, which it answers all the same.
+        #expect(generic.colorTemperature == nil, "no increment read yet")
+        #expect(generic.colorPresets == nil)
+        let withIncrement = MonitorProfile.generic(capabilities: MonitorCapabilities(parsing: try Fixtures.hpCapabilities()),
+                                                   temperatureIncrement: 50)
+        #expect(withIncrement.colorTemperature == ColorTemperatureScale(increment: 50, kelvinPreset: nil))
+        #expect(MonitorProfile.generic(capabilities: nil, temperatureIncrement: 50).colorTemperature == nil)
 
         let blind = MonitorProfile.generic(capabilities: nil)
         #expect(blind.brightness && blind.contrast)

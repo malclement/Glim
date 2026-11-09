@@ -29,12 +29,25 @@ enum MonitorText {
         monitor.audioDeviceName ?? (monitor.volume == nil ? "Not controlled" : "Over DDC/CI")
     }
 
-    private static let controlOrder: [MonitorProfile.Control] = [.brightness, .contrast, .volume, .mute, .input]
+    /// A color temperature as shown: kelvin, or, when the active preset has
+    /// none, that preset's name.
+    @MainActor
+    static func colorTemperature(of monitor: Monitor) -> String {
+        guard let value = monitor.colorTemperature?.value else { return "–" }
+        if let kelvin = monitor.profile.colorTemperature?.kelvin(for: value) { return "\(kelvin) K" }
+        return monitor.colorPreset?.currentName ?? "Custom"
+    }
+
+    private static let controlOrder: [MonitorProfile.Control] = [
+        .brightness, .contrast, .colorTemperature, .colorPreset, .volume, .mute, .input,
+    ]
 
     private static func name(of control: MonitorProfile.Control) -> String {
         switch control {
         case .brightness: "brightness"
         case .contrast: "contrast"
+        case .colorTemperature: "color temperature"
+        case .colorPreset: "color presets"
         case .volume: "volume"
         case .mute: "mute"
         case .input: "input switching"

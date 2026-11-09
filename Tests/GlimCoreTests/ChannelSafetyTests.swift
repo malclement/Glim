@@ -22,7 +22,10 @@ import Testing
     }
 
     @Test func theAllowListIsWhatGlimWrites() {
-        #expect(DDCChannel.writableCodes == [.brightness, .contrast, .inputSource, .audioVolume, .audioMute])
+        #expect(DDCChannel.writableCodes == [.brightness, .contrast, .colorTemperature, .colorPreset,
+                                             .inputSource, .audioVolume, .audioMute])
+        // 0x0B is the read-only temperature increment.
+        #expect(!DDCChannel.writableCodes.contains(.colorTemperatureIncrement))
     }
 
     /// The reviewers' scenario: the channel is stuck, the user confirms an

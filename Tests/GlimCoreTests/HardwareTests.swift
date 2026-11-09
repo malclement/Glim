@@ -8,8 +8,9 @@ import Testing
 /// (`make hardware-test`).
 ///
 /// Every write here was verified as safe and reversible during the reverse
-/// engineering (docs/controls.md): brightness, contrast, and the USB Audio
-/// level and mute. Each one is restored, even when an expectation fails.
+/// engineering (docs/controls.md): brightness, contrast, the color
+/// temperature and preset, and the USB Audio level and mute. Each one is
+/// restored, even when an expectation fails.
 /// Nothing touches the input, power or any vendor code.
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["GLIM_HARDWARE_TESTS"] == "1"), .serialized)
 struct HardwareTests {
@@ -126,6 +127,73 @@ struct HardwareTests {
         }
         let restored = try await output.isMuted()
         #expect(restored == original)
+    }
+
+    // MARK: Color
+    //
+    // 0x0C and 0x14 were written and read back during the reverse
+    // engineering (docs/controls.md). Both tests start from the factory color
+    // and put the monitor back there, which `0x14 ← 05` alone does.
+
+    /// The factory color: 6500 K, which reads 8 in 0x14 and 70 in 0x0C.
+    private func factoryColor(_ device: any DDCDevice) async throws -> Bool {
+        let preset = try await device.read(.colorPreset).current
+        let temperature = try await device.read(.colorTemperature).current
+        print("color: 0x14 reads \(preset), 0x0C reads \(temperature)")
+        return preset == 8 && temperature == 70
+    }
+
+    /// Each preset Glim offers, written, then recognized through the
+    /// measured table from what 0x14 and 0x0C read back.
+    @Test func everyOfferedPresetIsRecognized() async throws {
+        let device = try channel()
+        try #require(try await factoryColor(device), "set the monitor to its factory color first: ./glim set 14 5")
+        let presets = try #require(MonitorProfile.hpE27mG4.colorPresets)
+        let backend = ControlBackend<ColorPresetValue>.colorPreset(on: device, presets: presets)
+        try await restoring({ try await device.write(.colorPreset, value: 0x05) }) {
+            for option in presets.options {
+                try await device.write(.colorPreset, value: option.value)
+                try await Task.sleep(for: .milliseconds(800))
+                let reading = try await backend.read().value
+                #expect(reading == .preset(option.value), "\(option.name) read as \(reading)")
+            }
+        }
+        #expect(try await factoryColor(device))
+    }
+
+    /// The app's own controls on a real monitor object: sRGB, a temperature
+    /// from there (through 6500 K), one between presets, then the factory
+    /// preset as the reset.
+    @Test @MainActor func temperatureAndPresetThroughTheControls() async throws {
+        let device = try channel()
+        try #require(try await factoryColor(device), "set the monitor to its factory color first: ./glim set 14 5")
+        let monitor = Monitor(id: "hardware-test", display: try hp(), device: device, timing: .standard)
+        defer { monitor.invalidate() }
+        try await restoring({ try await device.write(.colorPreset, value: 0x05) }) {
+            monitor.start()
+            let loaded = await eventually(timeout: .seconds(15)) {
+                monitor.colorTemperature?.value != nil && monitor.colorPreset?.value != nil
+            }
+            try #require(loaded)
+            let selector = try #require(monitor.colorPreset)
+            let temperature = try #require(monitor.colorTemperature)
+            #expect(selector.current == selector.factory)
+            #expect(temperature.value == 70)
+
+            selector.select(try #require(selector.options.first { $0.name == "sRGB" }))
+            #expect(await eventually(timeout: .seconds(15)) { temperature.value == 0 && selector.current?.name == "sRGB" })
+
+            temperature.set(40)
+            #expect(await eventually(timeout: .seconds(15)) { selector.current?.name == "5000 K" })
+            #expect(try await device.read(.colorTemperature).current == 40)
+
+            temperature.set(55)
+            #expect(await eventually(timeout: .seconds(15)) { selector.currentName == "Custom" })
+
+            selector.select(try #require(selector.factory))
+            #expect(await eventually(timeout: .seconds(15)) { temperature.value == 70 && selector.current == selector.factory })
+        }
+        #expect(try await factoryColor(device))
     }
 
     // MARK: Helpers

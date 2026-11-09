@@ -21,8 +21,10 @@ struct GeneralSettingsView: View {
     @AppStorage(Preferences.showMenuBarIcon) private var showsMenuBarIcon = true
     @AppStorage(Preferences.alwaysShowDockIcon) private var alwaysShowsDockIcon = false
     @AppStorage(Preferences.showContrast) private var showContrast = true
+    @AppStorage(Preferences.showColor) private var showColor = true
     @AppStorage(Preferences.showVolume) private var showVolume = true
     @AppStorage(Preferences.showInput) private var showInput = true
+    @AppStorage(Preferences.showScenes) private var showScenes = true
 
     var body: some View {
         Form {
@@ -64,12 +66,14 @@ struct GeneralSettingsView: View {
             }
             Section {
                 Toggle("Contrast", isOn: $showContrast)
+                Toggle("Color", isOn: $showColor)
                 Toggle("Volume", isOn: $showVolume)
                 Toggle("Input", isOn: $showInput)
+                Toggle("Scenes", isOn: $showScenes)
             } header: {
                 Text("Show in the menu")
             } footer: {
-                Text("Brightness is always shown. Controls a display doesn't offer are never shown.")
+                Text("Brightness is always shown. Each display can change these in Glim's window.")
                     .foregroundStyle(.secondary)
                     // A grouped form aligns wrapped lines to the trailing edge.
                     .multilineTextAlignment(.leading)
@@ -77,7 +81,7 @@ struct GeneralSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(height: 400)
+        .frame(height: 440)
         .onAppear { login.refresh() }
     }
 }
@@ -106,7 +110,7 @@ struct AboutView: View {
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 400)
+        .frame(height: 440)
     }
 }
 

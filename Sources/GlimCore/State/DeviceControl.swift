@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 /// A reading from a device: a value and, for levels, the range it lives in.
 public struct DeviceReading<Value: Sendable>: Sendable {
@@ -106,6 +107,12 @@ public final class DeviceControl<Value: Sendable & Equatable> {
     @ObservationIgnored private var lastWriteFailed = false
     /// Tells the owning monitor whether a read reached the device.
     @ObservationIgnored var onLinkOutcome: (@MainActor (Result<Void, any Error>) -> Void)?
+    /// Whether a write was sent since the last read-back after writes.
+    @ObservationIgnored private var wroteSinceSettled = false
+    /// Called once the device has been read back after this control's own
+    /// writes, for a control whose writes move another one (the color
+    /// temperature and the color preset move together).
+    @ObservationIgnored var onSettled: (@MainActor () -> Void)?
 
     public init(backend: ControlBackend<Value>, timing: ControlTiming = .standard,
                 quantize: @escaping @Sendable (Value, ClosedRange<Double>?) -> Value = { value, _ in value }) {
@@ -173,6 +180,8 @@ public final class DeviceControl<Value: Sendable & Equatable> {
         while let target = pending, !invalidated {
             pending = nil
             if target == lastWritten { continue }
+            // Even a write that seems to fail may have reached the device.
+            wroteSinceSettled = true
             do {
                 let write = backend.write
                 try await withDeadline(timing.operationTimeout) { try await write(target) }
@@ -214,6 +223,10 @@ public final class DeviceControl<Value: Sendable & Equatable> {
         reconciler = nil
         guard writer == nil, !isEditing else { return }
         await readBack(expecting: expected)
+        // Only once nothing newer is under way; the next settle reports it.
+        guard !invalidated, wroteSinceSettled, generation == expected, writer == nil, !isEditing else { return }
+        wroteSinceSettled = false
+        onSettled?()
     }
 
     private func readBack(expecting expected: Int) async {
@@ -262,6 +275,52 @@ extension ControlBackend where Value == Double {
             read: { DeviceReading(value: try await output.volume(), range: 0...1) },
             write: { try await output.setVolume($0) },
             reportsLinkStatus: false
+        )
+    }
+}
+
+extension ControlBackend where Value == Double {
+    /// VCP 0x0C, in steps of the scale's increment. The range starts at 1:
+    /// 0 is not a temperature but "the active preset has none".
+    ///
+    /// While 0x0C reads 0, the first write selects the scale's Kelvin preset
+    /// first, so the new temperature lands in a preset that has one whatever
+    /// the monitor makes of a lone 0x0C write in sRGB or native.
+    public static func colorTemperature(on device: any DDCDevice, scale: ColorTemperatureScale) -> ControlBackend<Double> {
+        let withoutTemperature = OSAllocatedUnfairLock(initialState: false)
+        return ControlBackend(
+            read: {
+                let reading = try await device.read(.colorTemperature)
+                withoutTemperature.withLock { $0 = reading.current == 0 }
+                return DeviceReading(value: Double(reading.current), range: 1...Double(max(reading.maximum, 1)))
+            },
+            write: { value in
+                if let preset = scale.kelvinPreset, withoutTemperature.withLock({ $0 }) {
+                    try await device.write(.colorPreset, value: preset)
+                    withoutTemperature.withLock { $0 = false }
+                }
+                try await device.write(.colorTemperature, value: UInt16(clamping: max(1, Int(value.rounded()))))
+            }
+        )
+    }
+}
+
+extension ControlBackend where Value == ColorPresetValue {
+    /// VCP 0x14, translated through the monitor's preset table. Reads 0x0C
+    /// too when the table needs it to tell presets apart.
+    public static func colorPreset(on device: any DDCDevice, presets: ColorPresets) -> ControlBackend<ColorPresetValue> {
+        ControlBackend(
+            read: {
+                let reading = try await device.read(.colorPreset).current & 0xFF
+                let temperature = presets.readsTemperature ? try await device.read(.colorTemperature).current : nil
+                return DeviceReading(value: presets.value(reading: reading, temperature: temperature))
+            },
+            write: { value in
+                // Only offered presets are ever picked; anything else is
+                // what was read, and there is nothing to send.
+                guard case .preset(let raw) = value else { return }
+                try await device.write(.colorPreset, value: raw)
+            }
         )
     }
 }

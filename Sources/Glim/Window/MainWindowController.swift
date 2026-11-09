@@ -18,6 +18,8 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     static let defaultContentSize = NSSize(width: 760, height: 740)
 
     private let manager: MonitorManager
+    /// nil in tests that don't need scenes or display names.
+    let store: GlimStore?
     private let frameAutosaveName: String?
     private let present: @MainActor (NSWindow) -> Void
     private let onOpenChange: @MainActor (Bool) -> Void
@@ -32,10 +34,12 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     ///     window appears on screen.
     ///   - onOpenChange: Told when the window opens and closes.
     init(manager: MonitorManager,
+         store: GlimStore? = nil,
          frameAutosaveName: String? = nil,
          present: @escaping @MainActor (NSWindow) -> Void = MainWindowController.bringForward,
          onOpenChange: @escaping @MainActor (Bool) -> Void = { _ in }) {
         self.manager = manager
+        self.store = store
         self.frameAutosaveName = frameAutosaveName
         self.present = present
         self.onOpenChange = onOpenChange
@@ -64,7 +68,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     /// The window, made if needed, without showing it.
     func prepareWindow() -> NSWindow {
         if let window { return window }
-        let controller = NSHostingController(rootView: MainWindowView(manager: manager))
+        let controller = NSHostingController(rootView: MainWindowView(manager: manager).environment(\.glimStore, store))
         // SwiftUI's toolbar items go into the window's toolbar.
         controller.sceneBridgingOptions = [.toolbars]
         // The window can't be made smaller than the view allows.

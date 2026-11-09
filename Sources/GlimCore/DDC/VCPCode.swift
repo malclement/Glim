@@ -10,6 +10,14 @@ public struct VCPCode: RawRepresentable, Hashable, Sendable, CustomStringConvert
         self.rawValue = rawValue
     }
 
+    /// 0x0B, the color temperature increment in kelvin. Read only.
+    public static let colorTemperatureIncrement = VCPCode(0x0B)
+    /// 0x0C, the color temperature: 3000 K plus this many increments
+    /// (``colorTemperatureIncrement``). 0 means no Kelvin preset is active.
+    public static let colorTemperature = VCPCode(0x0C)
+    /// 0x14, the color preset. Writes use the MCCS values; some monitors (the
+    /// HP E27m G4) read back in their own numbering.
+    public static let colorPreset = VCPCode(0x14)
     /// 0x10, backlight luminance.
     public static let brightness = VCPCode(0x10)
     /// 0x12.
@@ -56,6 +64,32 @@ public enum InputSourceNames {
 
     public static func name(for value: UInt16) -> String {
         standardName(for: value) ?? "Input 0x" + String(value, radix: 16, uppercase: true).leftPadded(to: 2)
+    }
+}
+
+/// The MCCS 2.2a names for VCP 0x14 values.
+public enum ColorPresetNames {
+    public static func standardName(for value: UInt16) -> String? {
+        switch value {
+        case 0x01: "sRGB"
+        case 0x02: "Native"
+        case 0x03: "4000 K"
+        case 0x04: "5000 K"
+        case 0x05: "6500 K"
+        case 0x06: "7500 K"
+        case 0x07: "8200 K"
+        case 0x08: "9300 K"
+        case 0x09: "10000 K"
+        case 0x0A: "11500 K"
+        case 0x0B: "User 1"
+        case 0x0C: "User 2"
+        case 0x0D: "User 3"
+        default: nil
+        }
+    }
+
+    public static func name(for value: UInt16) -> String {
+        standardName(for: value) ?? "Preset 0x" + String(value, radix: 16, uppercase: true).leftPadded(to: 2)
     }
 }
 
