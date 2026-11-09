@@ -87,6 +87,9 @@ package final class FakePlatform: MonitorPlatform {
         package var devices: [UInt64: any DDCDevice] = [:]
         package var discoveries = 0
         package var devicesMade = 0
+        /// How many times the audio devices were listed. Every refresh of a
+        /// monitor with USB speakers lists them, so this shows a refresh ran.
+        package var audioQueries = 0
     }
 
     package let state = OSAllocatedUnfairLock(initialState: State())
@@ -140,7 +143,10 @@ package final class FakePlatform: MonitorPlatform {
     }
 
     package func audioOutputs() async -> [AudioDeviceInfo] {
-        state.withLock(\.audio)
+        state.withLock { state in
+            state.audioQueries += 1
+            return state.audio
+        }
     }
 
     package func makeAudioOutput(for device: AudioDeviceInfo) -> any AudioOutput {

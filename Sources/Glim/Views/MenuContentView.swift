@@ -89,12 +89,17 @@ struct MessageView: View {
     }
 }
 
-/// Settings and Quit, styled like menu items.
+/// The window, Settings and Quit, styled like menu items.
 private struct MenuFooter: View {
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openMainWindow) private var openMainWindow
 
     var body: some View {
         VStack(spacing: 0) {
+            // The window activates the app, and the menu closes as it does.
+            MenuRowButton(title: "Open Glim…") {
+                openMainWindow()
+            }
             MenuRowButton(title: "Settings…", shortcut: "⌘,") {
                 // A menu bar app is not active by default, and its Settings
                 // window would open behind whatever is.

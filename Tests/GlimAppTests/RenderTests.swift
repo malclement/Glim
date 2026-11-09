@@ -47,13 +47,37 @@ enum Situation: String, CaseIterable, Sendable {
         await setup.finish()
     }
 
+    // MARK: Window
+
+    /// The whole window, title bar, toolbar and sidebar included.
+    @Test(arguments: Situation.allCases)
+    func window(in situation: Situation) async throws {
+        let setup = try await Setup.make(situation)
+        let controller = MainWindowController(manager: setup.manager, present: { _ in })
+        try snapshot(controller.prepareWindow(), "window-\(situation.rawValue)")
+        await setup.finish()
+    }
+
+    /// With two monitors, the second one selected.
+    @Test func windowWithTheSecondMonitorSelected() async throws {
+        let setup = try await Setup.make(.twoMonitors)
+        let second = try #require(setup.manager.monitors.last)
+        let view = MonitorDetailView(manager: setup.manager, monitor: second)
+            .frame(width: 540, height: 620)
+        try snapshot(view, "window-detail-second-monitor", width: 540)
+    }
+
     // MARK: Settings
 
     @Test func settingsPanes() async throws {
+        let defaults = try TestDefaults("settings")
         let (setup, _, _) = try await Setup.readyHP()
-        try snapshot(SettingsView(manager: setup.manager), "settings-general", width: 460)
+        try snapshot(SettingsView(manager: setup.manager).defaultAppStorage(defaults.store), "settings-general", width: 460)
         try snapshot(DisplaysPaneHarness(manager: setup.manager), "settings-displays", width: 460)
         try snapshot(AboutPaneHarness(), "settings-about", width: 460)
+        // Without the menu bar icon, the Dock switch is on and can't be turned off.
+        defaults.store.set(false, forKey: Preferences.showMenuBarIcon)
+        try snapshot(SettingsView(manager: setup.manager).defaultAppStorage(defaults.store), "settings-general-no-menu-bar-icon", width: 460)
     }
 
     @Test func diagnosticsLeaveOutTheSerial() async throws {
@@ -74,6 +98,16 @@ enum Situation: String, CaseIterable, Sendable {
             let image = try #require(OffscreenRenderer.render(view, width: width, dark: dark), "\(name) did not render")
             #expect(image.pixelsWide >= Int(width), "\(name) is \(image.pixelsWide) px wide")
             #expect(image.pixelsHigh > 40, "\(name) is \(image.pixelsHigh) px high")
+            OffscreenRenderer.save(image, as: "\(name)-\(dark ? "dark" : "light")")
+        }
+    }
+
+    private func snapshot(_ window: NSWindow, _ name: String) throws {
+        for dark in [false, true] {
+            let image = try #require(OffscreenRenderer.render(window, dark: dark), "\(name) did not render")
+            let size = MainWindowController.defaultContentSize
+            #expect(image.pixelsWide >= Int(size.width) && image.pixelsHigh >= Int(size.height),
+                    "\(name) is \(image.pixelsWide)×\(image.pixelsHigh) px")
             OffscreenRenderer.save(image, as: "\(name)-\(dark ? "dark" : "light")")
         }
     }
@@ -223,6 +257,23 @@ struct Setup {
     }
 }
 
+/// A defaults suite of a test's own, emptied before and after, so a test
+/// never reads or writes the test runner's own defaults.
+final class TestDefaults {
+    let store: UserDefaults
+    private let name: String
+
+    init(_ name: String) throws {
+        self.name = "io.github.malclement.Glim.tests.\(name)"
+        store = try #require(UserDefaults(suiteName: self.name))
+        store.removePersistentDomain(forName: self.name)
+    }
+
+    deinit {
+        store.removePersistentDomain(forName: name)
+    }
+}
+
 /// TabView only builds its selected tab, so the other panes are rendered on
 /// their own.
 private struct DisplaysPaneHarness: View {
@@ -269,6 +320,18 @@ enum OffscreenRenderer {
         }
         guard let hosting = window.contentView else { return nil }
         return draw(hosting)
+    }
+
+    /// Draws a titled window, frame and toolbar included. It is never ordered
+    /// in: AppKit moves a titled window onto a screen when it is, and this one
+    /// draws all the same.
+    static func render(_ window: NSWindow, dark: Bool) -> NSBitmapImageRep? {
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        spin(0.2)
+        guard let frame = window.contentView?.superview else { return nil }
+        frame.layoutSubtreeIfNeeded()
+        return draw(frame)
     }
 
     /// Runs the main run loop, so SwiftUI can update and AppKit can draw.

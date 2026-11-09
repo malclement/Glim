@@ -45,9 +45,9 @@ display → host   [0x6E] [0x80 | n] [payload…] [checksum]   checksum = 0x50 ^
 
 | Request | Payload | Sent | Status |
 | --- | --- | --- | --- |
-| Get VCP | `01 <code>` | when a monitor connects, each time the menu opens, and once writes settle | ✅ |
+| Get VCP | `01 <code>` | when a monitor connects, each time the menu opens or the window comes forward, and once writes settle | ✅ |
 | Set VCP 0x10 brightness, 0x12 contrast | `03 <code> <hi> <lo>` | while a slider moves | ✅ round trip in the hardware tests |
-| Set VCP 0x60 input | `03 60 00 <value>` | only after the user confirms the switch in the menu | ⚠️ never sent to the hardware: the owner deferred input switching ([open-items.md](open-items.md)) |
+| Set VCP 0x60 input | `03 60 00 <value>` | only after the user confirms the switch, in the menu or the window | ⚠️ never sent to the hardware: the owner deferred input switching ([open-items.md](open-items.md)) |
 | Capabilities | `F3 <offset hi> <offset lo>` | only for monitors Glim has no profile for | ✅ string reassembled from the capture and re-read by the hardware tests |
 
 For a monitor without a profile, Glim can also read and write 0x62 (volume) and 0x8D (mute) when its capabilities list them. That path has never run against such a monitor.
@@ -110,12 +110,12 @@ Glim rescans when IOKit publishes or terminates a `DCPAVServiceProxy`, when AppK
 - ✅ DDC **0x62 is only a mirror** of the USB level: writes over DDC are accepted and ignored, and the value follows the USB volume.
 - ✅ **DDC 0x8D does not mirror the USB mute** (found 2026-11-04): with the USB output muted, 0x8D still reads 2 (unmuted). The two mutes are independent; Glim drives the USB one, which is the one macOS shows.
 - Glim finds the device by name (`HP E27m G4…`, USB transport, with output streams). With two monitors of the same model connected, or any display whose EDID is not known yet (it could be a second one), nothing says which USB device belongs to which display, so none gets a volume control: a wrong guess would change some other speaker. ⚠️ One case it cannot see: an HP connected for video only, next to a second HP connected by USB only, would get the second one's speakers.
-- The speakers are read whenever the menu opens, even while DDC is silent, and stay usable then.
+- The speakers are read whenever the menu opens or the window comes forward, even while DDC is silent, and stay usable then.
 
 ## Limitations and unknowns
 
 - ⚠️ **Input switching is untested on hardware.** Whether DDC keeps answering after the monitor switches away from USB-C is unknown; Glim expects that it may not, and shows "Not responding". Switching to a port with nothing connected blanks the screen until someone presses the monitor's input button.
-- Glim cannot tell when settings change from the monitor's own buttons. MCCS 0x02/0x52 might report that, but they are untested. Glim re-reads every control each time the menu opens instead of polling.
+- Glim cannot tell when settings change from the monitor's own buttons. MCCS 0x02/0x52 might report that, but they are untested. Glim re-reads every control each time the menu opens or the window comes forward, instead of polling.
 - Other DDC tools (MonitorControl, BetterDisplay, m1ddc, `glim`) running at the same time can interleave with Glim on the bus. Run one at a time.
 - A monitor that is asleep, or has DDC/CI turned off in its menu (HP: Management › DDC/CI), does not answer; the menu says so.
 - Only the HP E27m G4 has been tested. Other monitors get brightness and contrast if they answer, and the inputs and DDC volume their capabilities string lists, all marked untested.

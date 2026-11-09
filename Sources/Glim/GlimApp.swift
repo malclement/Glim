@@ -1,18 +1,44 @@
+import AppKit
 import GlimCore
 import SwiftUI
 
 @main
 struct GlimApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    /// Shared with the settings, and with the user, who can drag the icon out
+    /// of the menu bar. ``AppPresence`` keeps Glim in the Dock while it is off.
+    @AppStorage(Preferences.showMenuBarIcon) private var showsMenuBarIcon = true
 
     var body: some Scene {
-        MenuBarExtra("Glim", systemImage: "sun.max") {
+        MenuBarExtra("Glim", systemImage: "sun.max", isInserted: $showsMenuBarIcon) {
             MenuContentView(manager: appDelegate.manager)
+                .environment(\.openMainWindow, OpenMainWindowAction { [appDelegate] in appDelegate.showMainWindow() })
         }
         .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView(manager: appDelegate.manager)
+        }
+        .commands { GlimCommands() }
+    }
+}
+
+/// The menu bar's menus, shown while Glim is a regular app. SwiftUI gives an
+/// app without a document window no File menu, and so no ⌘W.
+struct GlimCommands: Commands {
+    var body: some Commands {
+        CommandGroup(replacing: .saveItem) {
+            Button("Close") {
+                // The window that has a close button: never the menu bar's.
+                if let window = NSApp.keyWindow, window.styleMask.contains(.closable) {
+                    window.performClose(nil)
+                }
+            }
+            .keyboardShortcut("w")
+        }
+        SidebarCommands()
+        CommandGroup(replacing: .help) {
+            Button("Glim Help") { NSWorkspace.shared.open(AppInfo.repositoryURL) }
         }
     }
 }

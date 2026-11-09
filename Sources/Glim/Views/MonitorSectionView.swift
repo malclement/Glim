@@ -71,8 +71,9 @@ struct MonitorSectionView: View {
     }
 }
 
-/// Shown instead of the controls while the monitor does not answer.
-private struct NotRespondingView: View {
+/// Shown instead of the controls while the monitor does not answer, in the
+/// menu and in the window.
+struct NotRespondingView: View {
     let monitor: Monitor
     @State private var isRetrying = false
 

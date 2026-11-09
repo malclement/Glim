@@ -20,6 +20,8 @@ struct SettingsView: View {
 
 struct GeneralSettingsView: View {
     @State private var login = LaunchAtLogin()
+    @AppStorage(Preferences.showMenuBarIcon) private var showsMenuBarIcon = true
+    @AppStorage(Preferences.alwaysShowDockIcon) private var alwaysShowsDockIcon = false
     @AppStorage(Preferences.showContrast) private var showContrast = true
     @AppStorage(Preferences.showVolume) private var showVolume = true
     @AppStorage(Preferences.showInput) private var showInput = true
@@ -43,6 +45,22 @@ struct GeneralSettingsView: View {
                 }
             }
             Section {
+                Toggle("Show in the menu bar", isOn: $showsMenuBarIcon)
+                // Without the menu bar icon, the Dock is the way back to Glim,
+                // so it stays there (AppPresence applies the same rule).
+                Toggle("Always show in the Dock", isOn: Binding(
+                    get: { alwaysShowsDockIcon || !showsMenuBarIcon },
+                    set: { alwaysShowsDockIcon = $0 }
+                ))
+                .disabled(!showsMenuBarIcon)
+            } footer: {
+                Text(showsMenuBarIcon
+                     ? "Otherwise Glim is in the Dock only while its window is open."
+                     : "Glim stays in the Dock while it isn't in the menu bar.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Section {
                 Toggle("Contrast", isOn: $showContrast)
                 Toggle("Volume", isOn: $showVolume)
                 Toggle("Input", isOn: $showInput)
@@ -55,7 +73,7 @@ struct GeneralSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(height: 290)
+        .frame(height: 400)
         .onAppear { login.refresh() }
     }
 }
@@ -97,7 +115,7 @@ struct DisplaysSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(height: 290)
+        .frame(height: 400)
     }
 
     private func profileText(_ profile: MonitorProfile) -> String {
@@ -133,7 +151,7 @@ struct AboutView: View {
             Text("Version \(AppInfo.versionString)")
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
-            Text("Brightness, contrast, volume and input for your external display, from the menu bar.")
+            Text("Brightness, contrast, volume and input for your external display, from the menu bar or Glim's window.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 40)
@@ -145,7 +163,7 @@ struct AboutView: View {
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 290)
+        .frame(height: 400)
     }
 }
 

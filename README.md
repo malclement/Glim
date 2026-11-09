@@ -1,10 +1,10 @@
 # Glim
 
-Brightness, contrast, volume and input for your external display, from the Mac menu bar.
+Brightness, contrast, volume and input for your external display, from the Mac menu bar or Glim's own window.
 
 ![Glim's menu, in light and dark mode](docs/images/menu.png)
 
-Glim is a native menu bar app for Macs with Apple silicon. It talks to the monitor itself, over DDC/CI and the monitor's own USB Audio device. Brightness is the real backlight, not a dimming overlay, and volume is the monitor's speakers even when they aren't the Mac's sound output.
+Glim is a native menu bar app for Macs with Apple silicon, with a window that holds every monitor and control. It talks to the monitor itself, over DDC/CI and the monitor's own USB Audio device. Brightness is the real backlight, not a dimming overlay, and volume is the monitor's speakers even when they aren't the Mac's sound output.
 
 ## Supported monitors
 
@@ -18,7 +18,7 @@ Glim is a native menu bar app for Macs with Apple silicon. It talks to the monit
 | Brightness | DDC/CI VCP 0x10 | ✅ verified |
 | Contrast | DDC/CI VCP 0x12 | ✅ verified |
 | Volume and mute | the monitor's USB Audio device (DDC 0x62 only mirrors it) | ✅ verified |
-| Input (DisplayPort, HDMI, USB-C) | DDC/CI VCP 0x60, after a confirmation in the menu | ⚠️ implemented, not yet tried on the hardware |
+| Input (DisplayPort, HDMI, USB-C) | DDC/CI VCP 0x60, after a confirmation | ⚠️ implemented, not yet tried on the hardware |
 
 ## Requirements
 
@@ -30,7 +30,7 @@ Glim is a native menu bar app for Macs with Apple silicon. It talks to the monit
 
 1. Download `Glim-x.y.z.dmg` from [Releases](https://github.com/malclement/Glim/releases).
 2. Open it and drag **Glim** to **Applications**.
-3. Open Glim from Applications. A sun appears in the menu bar. To start it with your Mac, turn on **Settings › General › Open Glim at login**.
+3. Open Glim from Applications. Its window opens, a sun appears in the menu bar, and Glim is in the Dock while the window is open. To start it with your Mac, turn on **Settings › General › Open Glim at login**: it then starts in the menu bar, without its window.
 
 A release that isn't notarized says so in its notes. macOS blocks such a build the first time it opens: choose **Open Anyway** in **System Settings › Privacy & Security**, or run `xattr -dr com.apple.quarantine /Applications/Glim.app`.
 
@@ -47,7 +47,7 @@ The Xcode Command Line Tools are enough. [docs/development.md](docs/development.
 ## Known limitations
 
 - **Input switching hasn't been tried on the hardware yet.** Switching to a port with nothing connected blanks the screen until you press the monitor's input button. That is why the menu asks first.
-- Changes made with the monitor's own buttons show up the next time you open the menu; Glim doesn't poll.
+- Changes made with the monitor's own buttons show up the next time you open the menu or bring the window forward; Glim doesn't poll.
 - Glim uses a private macOS interface for DDC/CI, as MonitorControl, BetterDisplay and m1ddc do. A macOS update could break it; Glim then says DDC/CI is unavailable.
 - Don't run another DDC/CI tool at the same time: their commands can collide on the bus.
 - With two identical monitors, Glim can't tell which USB speakers belong to which, so it offers no volume control for either.
@@ -59,7 +59,7 @@ The Xcode Command Line Tools are enough. [docs/development.md](docs/development.
 | --- | --- |
 | The menu says **Not responding** | The monitor may be asleep or showing another input. Otherwise DDC/CI may be off in its menu (HP: **Management › DDC/CI**). Then choose **Try Again**. |
 | No volume slider | Check that the monitor's USB is connected (USB-C on the HP). **Settings › Displays** shows which speakers Glim found. |
-| A control is missing | Glim only shows controls the monitor answers for. **Settings › General** can also hide contrast, volume and input. |
+| A control is missing | Glim only shows controls the monitor answers for. **Settings › General** can also hide contrast, volume and input from the menu; the window always shows them. |
 | Something else | **Settings › Displays › Copy Diagnostics**, and attach the result to an [issue](https://github.com/malclement/Glim/issues). Serial numbers are left out. |
 
 ## How it works
