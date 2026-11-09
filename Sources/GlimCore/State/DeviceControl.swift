@@ -91,6 +91,10 @@ public final class DeviceControl<Value: Sendable & Equatable> {
     public private(set) var failure: ControlFailure?
     /// True while the user is dragging.
     public private(set) var isEditing = false
+    /// How many changes came from the user (a slider, a picker, a scene), as
+    /// opposed to automatic adjustment. Automatic brightness watches it to
+    /// know that someone took over.
+    @ObservationIgnored public private(set) var userChanges = 0
 
     @ObservationIgnored private let backend: ControlBackend<Value>
     @ObservationIgnored private let timing: ControlTiming
@@ -126,12 +130,16 @@ public final class DeviceControl<Value: Sendable & Equatable> {
 
     // MARK: User intent
 
-    /// Applies a user change: shown at once, written as soon as the device is
+    /// Applies a change: shown at once, written as soon as the device is
     /// free. Ignored until the device has been read once, because until then
     /// its range, and whether it answers at all, is unknown.
-    public func set(_ newValue: Value) {
+    ///
+    /// - Parameter automatic: true for a change Glim makes on its own
+    ///   (automatic brightness), which doesn't count in ``userChanges``.
+    public func set(_ newValue: Value, automatic: Bool = false) {
         guard !invalidated, value != nil else { return }
         let target = quantize(newValue, range)
+        if !automatic { userChanges &+= 1 }
         guard target != value || writer != nil else { return }
         value = target
         generation &+= 1
@@ -147,6 +155,8 @@ public final class DeviceControl<Value: Sendable & Equatable> {
     public func setEditing(_ editing: Bool) {
         guard editing != isEditing else { return }
         isEditing = editing
+        // Grabbing the slider is taking over, even before it moves.
+        if editing { userChanges &+= 1 }
         if !editing, writer == nil { scheduleReconcile() }
     }
 

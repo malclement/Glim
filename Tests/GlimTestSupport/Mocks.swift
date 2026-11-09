@@ -1,3 +1,4 @@
+import Foundation
 import CoreAudio
 import os
 import GlimCore
@@ -189,4 +190,34 @@ package enum TestIdentity {
         vendorID: 0x220E, productID: 0x3753, serialNumber: 0x0101_0101,
         alphanumericSerial: "TEST0000001", productName: "HP E27m G4"
     )
+}
+
+/// A Mac whose light, built-in brightness, lid and clock the test sets.
+@MainActor
+package final class ScriptedEnvironment: AdaptiveEnvironment {
+    package var hasLightSensor = true
+    package var hasBuiltInBrightness = true
+    package var currentLux: Double? = 10
+    package var currentBuiltIn: Double? = 0.5
+    package var lidClosed = false
+    package var date: Date
+    package private(set) var luxReads = 0
+    package private(set) var builtInReads = 0
+
+    package init(hour: Int = 12) {
+        date = Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: Date())!
+    }
+
+    package func lux() -> Double? {
+        luxReads += 1
+        return currentLux
+    }
+
+    package func builtInBrightness() -> Double? {
+        builtInReads += 1
+        return currentBuiltIn
+    }
+
+    package func isLidClosed() -> Bool { lidClosed }
+    package func now() -> Date { date }
 }

@@ -9,10 +9,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let manager: MonitorManager
     /// Scenes and per-display choices.
     let store: GlimStore
+    /// Automatic brightness and evening warmth.
+    let adaptive: AdaptiveController
     /// Whether Glim is in the Dock.
     let presence: AppPresence
     private(set) lazy var mainWindow = MainWindowController(
-        manager: manager, store: store, frameAutosaveName: frameAutosaveName, present: present
+        manager: manager, store: store, adaptive: adaptive, frameAutosaveName: frameAutosaveName, present: present
     ) { [weak self] isOpen in
         self?.presence.isWindowOpen = isOpen
     }
@@ -29,12 +31,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Tests pass a manager on a fake platform, a defaults suite of their own,
     /// a window that never comes on screen nor saves its frame, and a policy
     /// recorder, so that launching never touches the test process itself.
-    init(manager: MonitorManager, defaults: UserDefaults, frameAutosaveName: String? = nil,
+    init(manager: MonitorManager, defaults: UserDefaults, adaptiveEnvironment: (any AdaptiveEnvironment)? = nil,
+         frameAutosaveName: String? = nil,
          present: @escaping @MainActor (NSWindow) -> Void,
          setPolicy: @escaping @MainActor (NSApplication.ActivationPolicy) -> Void = { _ = NSApp.setActivationPolicy($0) },
          isAnotherCopyRunning: @escaping @MainActor () -> Bool = AppDelegate.anotherCopyIsRunning) {
         self.manager = manager
-        self.store = GlimStore(defaults: defaults)
+        let store = GlimStore(defaults: defaults)
+        self.store = store
+        self.adaptive = AdaptiveController(manager: manager, environment: adaptiveEnvironment ?? LiveAdaptiveEnvironment(),
+                                           settings: store.loadAdaptive(), save: { store.saveAdaptive($0) })
         self.presence = AppPresence(defaults: defaults, setPolicy: setPolicy)
         self.frameAutosaveName = frameAutosaveName
         self.present = present
@@ -65,7 +71,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // launching: read it first.
         let launchEvent = NSAppleEventManager.shared().currentAppleEvent
         manager.start()
+        adaptive.start()
         let workspace = NSWorkspace.shared.notificationCenter
+        // Nothing is read while the displays sleep; on wake every display
+        // catches up with the light at once.
+        observe(workspace, NSWorkspace.screensDidSleepNotification) { [weak self] _ in self?.adaptive.setSuspended(true) }
+        observe(workspace, NSWorkspace.screensDidWakeNotification) { [weak self] _ in self?.adaptive.setSuspended(false) }
         // After a sleep the display transport is often recreated; give it a
         // moment, then look again.
         observe(workspace, NSWorkspace.didWakeNotification) { $0.scheduleRescan(after: .seconds(2)) }
@@ -113,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         for (center, observer) in observers { center.removeObserver(observer) }
         observers.removeAll()
+        adaptive.stop()
         manager.stop()
     }
 

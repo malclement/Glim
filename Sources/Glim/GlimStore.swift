@@ -69,6 +69,7 @@ final class GlimStore {
 
     static let scenesKey = "scenes"
     static let displaysKey = "displays"
+    static let adaptiveKey = "adaptive"
 
     /// - Parameter defaults: Where to keep everything, or nil to keep it in
     ///   memory only.
@@ -192,6 +193,18 @@ final class GlimStore {
         }
     }
 
+    // MARK: Automatic brightness
+
+    /// Each display's automatic brightness and warmth, by monitor id. The
+    /// controller owns them while Glim runs; they are kept here.
+    func loadAdaptive() -> [String: AdaptiveSettings] {
+        load([String: AdaptiveSettings].self, key: Self.adaptiveKey) ?? [:]
+    }
+
+    func saveAdaptive(_ settings: [String: AdaptiveSettings]) {
+        save(settings, key: Self.adaptiveKey)
+    }
+
     // MARK: Persistence
 
     private func saveScenes() { save(scenes, key: Self.scenesKey) }
@@ -229,5 +242,17 @@ extension EnvironmentValues {
     var glimStore: GlimStore? {
         get { self[GlimStoreKey.self] }
         set { self[GlimStoreKey.self] = newValue }
+    }
+}
+
+private struct AdaptiveControllerKey: EnvironmentKey {
+    static let defaultValue: AdaptiveController? = nil
+}
+
+extension EnvironmentValues {
+    /// Automatic brightness. Views without it don't offer it.
+    var adaptive: AdaptiveController? {
+        get { self[AdaptiveControllerKey.self] }
+        set { self[AdaptiveControllerKey.self] = newValue }
     }
 }

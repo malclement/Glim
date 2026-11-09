@@ -233,3 +233,20 @@ struct HardwareTests {
         }
     }
 }
+
+/// The Mac's own light sensor and built-in brightness, read only. Off unless
+/// `GLIM_HARDWARE_TESTS=1`; needs a MacBook with its lid open.
+@Suite(.enabled(if: ProcessInfo.processInfo.environment["GLIM_HARDWARE_TESTS"] == "1"))
+@MainActor struct SensorHardwareTests {
+    @Test func theLightSensorAndTheBuiltInScreenCanBeRead() throws {
+        let environment = LiveAdaptiveEnvironment()
+        #expect(environment.hasLightSensor)
+        #expect(environment.hasBuiltInBrightness)
+        try #require(!environment.isLidClosed(), "open the lid: the sensor is in it")
+        let lux = try #require(environment.lux())
+        #expect(lux >= 0)
+        let brightness = try #require(environment.builtInBrightness())
+        #expect((0...1).contains(brightness))
+        print("light sensor: \(lux) lux; built-in brightness \(brightness)")
+    }
+}
