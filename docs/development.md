@@ -47,7 +47,7 @@ GLIM_RENDER_DIR=/tmp/glim-renders swift test --filter RenderTests
 open /tmp/glim-renders
 ```
 
-**Hardware.** `make hardware-test` sets `GLIM_HARDWARE_TESTS=1` and runs `HardwareTests` against a connected HP E27m G4. It reads the identity and capabilities, then round-trips brightness, contrast, a 30-step drag, and the USB Audio volume and mute. These are only writes the reverse engineering verified as reversible, and each one is restored even when an expectation fails. It never touches the input, power or any vendor code. To check that the monitor is back where it was, compare `./glim scan` (after `make glim`) before and after: only 0xC0, the usage-hour counter, should change.
+**Hardware.** `make hardware-test` sets `GLIM_HARDWARE_TESTS=1` and runs `HardwareTests` against a connected HP E27m G4. It reads the identity and capabilities, then round-trips brightness, contrast, a 30-step drag, the color presets and temperature (from the factory 6500 K and back to it), and the USB Audio volume and mute. These are only writes the reverse engineering verified as reversible, and each one is restored even when an expectation fails. It never touches the input, power or any vendor code. To check that the monitor is back where it was, compare `./glim scan` (after `make glim`) before and after: only 0xC0, the usage-hour counter, should change.
 
 ## Running a development build
 

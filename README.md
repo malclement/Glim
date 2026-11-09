@@ -1,6 +1,6 @@
 # Glim
 
-Brightness, contrast, volume and input for your external display, from the Mac menu bar or Glim's own window.
+Brightness, contrast, color, volume and input for your external display, from the Mac menu bar or Glim's own window.
 
 ![Glim's menu, in light and dark mode](docs/images/menu.png)
 
@@ -10,15 +10,20 @@ Glim is a native menu bar app for Macs with Apple silicon, with a window that ho
 
 | Monitor | Status |
 | --- | --- |
-| **HP E27m G4** | Tested. Every control below was exercised on the hardware, except input switching. |
+| **HP E27m G4** | Tested. Every control below was exercised on the hardware, except input switching and, through the app, color. |
 | Other DDC/CI monitors | Untested. Glim offers the controls the monitor's own capabilities string lists, once each one answers a read, and marks the monitor as untested in the menu. |
 
 | Control | How | HP E27m G4 |
 | --- | --- | --- |
 | Brightness | DDC/CI VCP 0x10 | ✅ verified |
 | Contrast | DDC/CI VCP 0x12 | ✅ verified |
+| Color temperature (3050–9300 K) and presets (sRGB, native, 5000 K, 6500 K factory, 9300 K) | DDC/CI VCP 0x0C and 0x14 | ⚠️ both codes verified with the CLI; the app's controls not yet run on the hardware |
 | Volume and mute | the monitor's USB Audio device (DDC 0x62 only mirrors it) | ✅ verified |
 | Input (DisplayPort, HDMI, USB-C) | DDC/CI VCP 0x60, after a confirmation | ⚠️ implemented, not yet tried on the hardware |
+
+**Scenes.** Save what your displays show (brightness, contrast, color) as a scene such as "Day" or "Evening", from **New Scene** in the window's toolbar, and apply it from the menu, the window or **⌘1–⌘9** in one click. Each scene has a symbol, chooses which of the three it sets, shows what each display shows now next to what it would set, and is ticked while the connected displays show it. Scenes and display names are kept in Glim's preferences; the monitor values themselves are always read from the monitor.
+
+**Per display.** In the window, give a display a name of your own, hide it from the menu, or choose which of its rows the menu shows. Rows you don't change follow **Settings › General**.
 
 ## Requirements
 
