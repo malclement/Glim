@@ -23,6 +23,8 @@ Glim is a native menu bar app for Macs with Apple silicon, with a window that ho
 
 **Scenes.** Save what your displays show (brightness, contrast, color) as a scene such as "Day" or "Evening", from **New Scene** in the window's toolbar, and apply it from the menu, the window or **⌘1–⌘9** in one click. Each scene has a symbol, chooses which of the three it sets, shows what each display shows now next to what it would set, and is ticked while the connected displays show it. Scenes and display names are kept in Glim's preferences; the monitor values themselves are always read from the monitor.
 
+**Automatic brightness.** In the window, turn on **Adjust brightness automatically** for a display. It follows the light in the room (the MacBook's own sensor), the MacBook screen's brightness, or a day/night schedule, which also takes over while the lid is closed. Moving the slider yourself takes over until the light changes noticeably, and Glim learns from it. **Warmer in the evening** lowers the color temperature at night on displays that have one.
+
 **Per display.** In the window, give a display a name of your own, hide it from the menu, or choose which of its rows the menu shows. Rows you don't change follow **Settings › General**.
 
 ## Requirements
