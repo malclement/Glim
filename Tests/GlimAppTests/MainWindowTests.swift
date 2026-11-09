@@ -86,6 +86,30 @@ import Testing
         #expect(controller.isOpen, "a minimised window is still open")
     }
 
+    /// Picking another monitor in the sidebar drops a switch staged on the one
+    /// that left, so the prompt isn't waiting when it comes back.
+    @Test func leavingAMonitorInTheSidebarDropsItsStagedInputSwitch() async throws {
+        let setup = try await Setup.make(.twoMonitors)
+        let first = try #require(setup.manager.monitors.first)
+        let controller = MainWindowController(manager: setup.manager, present: { _ in })
+        let window = controller.prepareWindow()
+        OffscreenRenderer.spin(0.2)
+        let hdmi = try #require(first.input?.options.first { $0.name == "HDMI" })
+        first.input?.request(hdmi)
+        #expect(first.input?.pendingSelection == hdmi)
+
+        // The sidebar is the table furthest left; its last row is the second
+        // monitor. AppKit tells SwiftUI about the selection as a click would.
+        let sidebar = try #require(tables(in: window.contentView).min { leftEdge(of: $0) < leftEdge(of: $1) })
+        sidebar.selectRowIndexes(IndexSet(integer: sidebar.numberOfRows - 1), byExtendingSelection: false)
+        var dropped = false
+        for _ in 0..<250 where !dropped {
+            OffscreenRenderer.spin(0.02)
+            dropped = first.input?.pendingSelection == nil
+        }
+        #expect(dropped)
+    }
+
     @Test func theWindowReadsTheMonitorsWhenItComesForward() async throws {
         let (setup, _, _) = try await Setup.readyHP()
         let controller = MainWindowController(manager: setup.manager, present: { _ in })
@@ -201,6 +225,16 @@ import Testing
         guard let view else { return [] }
         if let slider = view as? NSSlider { return [slider] }
         return view.subviews.flatMap(sliders(in:))
+    }
+
+    private func tables(in view: NSView?) -> [NSTableView] {
+        guard let view else { return [] }
+        if let table = view as? NSTableView { return [table] }
+        return view.subviews.flatMap(tables(in:))
+    }
+
+    private func leftEdge(of view: NSView) -> CGFloat {
+        view.convert(view.bounds, to: nil).minX
     }
 
     // SwiftUI's AppKit slider runs from its minValue to its maxValue (0 to 1)

@@ -38,6 +38,13 @@ struct MainWindowView: View {
             }
         }
         .frame(minWidth: 620, minHeight: 440)
+        // A switch staged on the monitor that leaves the pane, picked in the
+        // sidebar or replaced by another as monitors come and go, must not be
+        // waiting when it comes back. Only the input: a drag in the menu on
+        // that monitor carries on.
+        .onChange(of: shownMonitor?.id) { leaving, _ in
+            manager.monitors.first { $0.id == leaving }?.input?.cancel()
+        }
     }
 
     @ViewBuilder
