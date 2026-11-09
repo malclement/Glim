@@ -36,6 +36,9 @@ enum Situation: String, CaseIterable, Sendable {
     /// Two scenes, one active; the HP renamed "Desk", its input row hidden
     /// from the menu, at a warm custom temperature.
     case scenes
+    /// Automatic brightness following a dim room (10 lux), with one
+    /// learned point, and evening warmth on.
+    case adaptive
 }
 
 /// Renders the app's real views, in every designed state, in an offscreen
@@ -57,7 +60,9 @@ enum Situation: String, CaseIterable, Sendable {
     @Test(arguments: Situation.allCases)
     func menu(in situation: Situation) async throws {
         let setup = try await Setup.make(situation)
-        try snapshot(MenuContentView(manager: setup.manager).environment(\.glimStore, setup.store), "menu-\(situation.rawValue)")
+        try snapshot(MenuContentView(manager: setup.manager)
+            .environment(\.glimStore, setup.store)
+            .environment(\.adaptive, setup.adaptive), "menu-\(situation.rawValue)")
         await setup.finish()
     }
 
@@ -67,7 +72,8 @@ enum Situation: String, CaseIterable, Sendable {
     @Test(arguments: Situation.allCases)
     func window(in situation: Situation) async throws {
         let setup = try await Setup.make(situation)
-        let controller = MainWindowController(manager: setup.manager, store: setup.store, present: { _ in })
+        let controller = MainWindowController(manager: setup.manager, store: setup.store, adaptive: setup.adaptive,
+                                              present: { _ in })
         try snapshot(controller.prepareWindow(), "window-\(situation.rawValue)")
         await setup.finish()
     }
@@ -79,6 +85,19 @@ enum Situation: String, CaseIterable, Sendable {
         let view = MonitorDetailView(manager: setup.manager, monitor: second)
             .frame(width: 540, height: 620)
         try snapshot(view, "window-detail-second-monitor", width: 540)
+    }
+
+    /// The whole detail pane with automatic brightness on, below the fold
+    /// included.
+    @Test func adaptiveDetail() async throws {
+        let setup = try await Setup.make(.adaptive)
+        let monitor = try #require(setup.manager.monitors.first)
+        let view = MonitorDetailView(manager: setup.manager, monitor: monitor)
+            .environment(\.adaptive, setup.adaptive)
+            .environment(\.glimStore, setup.store)
+            .frame(width: 560, height: 1900)
+        try snapshot(view, "window-detail-adaptive", width: 560)
+        await setup.finish()
     }
 
     /// The scenes' editors: "Day", which the display no longer shows (so
@@ -146,6 +165,8 @@ struct Setup {
     let platform: FakePlatform
     /// Scenes and display choices, in memory; nil where they don't matter.
     var store: GlimStore?
+    /// Automatic brightness on a scripted sensor; nil where it doesn't matter.
+    var adaptive: AdaptiveController?
     private var cleanup: (@MainActor () async -> Void)?
 
     static let hpAudio = AudioDeviceInfo(id: 97, name: "HP E27m G4 USB Audio", isUSB: true)
@@ -194,6 +215,27 @@ struct Setup {
             monitor.colorPreset?.select(srgb)
             #expect(await eventually { monitor.colorTemperature?.value == 0 && monitor.colorPreset?.isWriting == false })
             #expect(MonitorText.colorTemperature(of: monitor) == "sRGB")
+            return setup
+
+        case .adaptive:
+            var (setup, monitor, _) = try await readyHP()
+            var timing = AdaptiveTiming()
+            timing.interval = nil
+            timing.fadeDuration = .zero
+            let environment = ScriptedEnvironment(hour: 14)
+            environment.currentLux = 10
+            let adaptive = AdaptiveController(manager: setup.manager, environment: environment, timing: timing)
+            adaptive.update(monitor.id) { settings in
+                settings.isEnabled = true
+                settings.lightCurve.learn(x: BrightnessCurve.lightReading(lux: 100), y: 0.55)
+                settings.warmsInEvening = true
+            }
+            let curve = adaptive.settings(for: monitor.id).lightCurve
+            let target = (curve.brightness(at: BrightnessCurve.lightReading(lux: 10)) * 100).rounded()
+            #expect(await eventually { monitor.brightness?.value == target && monitor.brightness?.isWriting == false })
+            adaptive.tick()
+            setup.store = GlimStore(defaults: nil)
+            setup.adaptive = adaptive
             return setup
 
         case .scenes:

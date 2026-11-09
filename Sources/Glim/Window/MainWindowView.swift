@@ -131,10 +131,10 @@ private struct SidebarList: View {
                 Section("Scenes") {
                     if store.scenes.isEmpty {
                         // Not selectable: it has no tag.
-                        Text("Save what your displays show with the + button, then apply it from here or the menu.")
+                        Text("None yet: save one with +")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .help("Save what your displays show with the + button, then apply it from here or the menu.")
                     }
                     ForEach(store.scenes) { scene in
                         SceneListRow(scene: scene, isActive: scene.isActive(on: manager.monitors))

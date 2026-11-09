@@ -90,6 +90,43 @@ import Testing
         #expect(store.displays["a"] == nil, "nothing left to keep")
     }
 
+    // MARK: Automatic brightness
+
+    /// What the controller learns and is set to is kept, and comes back
+    /// with the app.
+    @Test func automaticBrightnessSurvivesARelaunch() async throws {
+        let defaults = try TestDefaults("store-adaptive")
+        let (setup, monitor, _) = try await Setup.readyHP()
+        let environment = ScriptedEnvironment()
+        let delegate = AppDelegate(manager: setup.manager, defaults: defaults.store, adaptiveEnvironment: environment,
+                                   present: { _ in }, setPolicy: { _ in }, isAnotherCopyRunning: { false })
+        delegate.adaptive.update(monitor.id) {
+            $0.source = .followBuiltIn
+            $0.nightKelvin = 4000
+        }
+        let relaunched = AppDelegate(manager: setup.manager, defaults: defaults.store, adaptiveEnvironment: environment,
+                                     present: { _ in }, setPolicy: { _ in }, isAnotherCopyRunning: { false })
+        #expect(relaunched.adaptive.settings(for: monitor.id).source == .followBuiltIn)
+        #expect(relaunched.adaptive.settings(for: monitor.id).nightKelvin == 4000)
+        #expect(delegate.mainWindow.adaptive === delegate.adaptive)
+        await setup.finish()
+    }
+
+    /// Glim with automatic brightness off reads no sensor, ever.
+    @Test func offByDefaultAndSilent() async throws {
+        let defaults = try TestDefaults("store-adaptive-off")
+        let (setup, _, _) = try await Setup.readyHP()
+        let environment = ScriptedEnvironment()
+        let delegate = AppDelegate(manager: setup.manager, defaults: defaults.store, adaptiveEnvironment: environment,
+                                   present: { _ in }, setPolicy: { _ in }, isAnotherCopyRunning: { false })
+        delegate.adaptive.start()
+        delegate.adaptive.tick()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(!delegate.adaptive.isRunning)
+        #expect(environment.luxReads == 0 && environment.builtInReads == 0)
+        await setup.finish()
+    }
+
     // MARK: The app
 
     @Test func theWindowUsesTheAppsStore() {

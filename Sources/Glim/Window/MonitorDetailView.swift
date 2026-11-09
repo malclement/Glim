@@ -8,13 +8,14 @@ struct MonitorDetailView: View {
     let manager: MonitorManager
     let monitor: Monitor
     @Environment(\.glimStore) private var store
+    @Environment(\.adaptive) private var adaptive
 
     var body: some View {
         Form {
             Section {
                 MonitorHeader(monitor: monitor, title: store?.title(for: monitor, in: manager) ?? manager.title(for: monitor))
             }
-            MonitorControls(monitor: monitor)
+            MonitorControls(monitor: monitor, adaptive: adaptive)
                 .labelStyle(IconColumnLabelStyle())
             if let store {
                 MenuChoices(store: store, monitor: monitor)
@@ -157,6 +158,8 @@ private struct MonitorHeader: View {
 /// way for a retry, and USB speakers, a separate device, stay.
 private struct MonitorControls: View {
     let monitor: Monitor
+    /// Automatic brightness, beside the controls it drives.
+    let adaptive: AdaptiveController?
 
     var body: some View {
         switch monitor.status {
@@ -179,12 +182,19 @@ private struct MonitorControls: View {
             if monitor.brightness != nil || monitor.contrast != nil {
                 Section("Picture") {
                     if let brightness = monitor.brightness {
-                        LevelControl(title: "Brightness", symbol: "sun.max", control: brightness)
+                        LabeledContent {
+                            LevelSlider(title: "Brightness", control: brightness)
+                        } label: {
+                            Label { Text("Brightness") } icon: { BrightnessSymbol(monitor: monitor) }
+                        }
                     }
                     if let contrast = monitor.contrast {
                         LevelControl(title: "Contrast", symbol: "circle.lefthalf.filled", control: contrast)
                     }
                 }
+            }
+            if let adaptive, monitor.brightness != nil {
+                AdaptiveBrightnessSection(controller: adaptive, monitor: monitor)
             }
             if monitor.colorTemperature != nil || monitor.colorPreset != nil {
                 Section("Color") {
@@ -199,6 +209,10 @@ private struct MonitorControls: View {
                         ColorPresetControl(selector: preset)
                     }
                 }
+            }
+            if let adaptive, let scale = monitor.profile.colorTemperature, let control = monitor.colorTemperature {
+                EveningWarmthSection(controller: adaptive, monitor: monitor, scale: scale,
+                                     maximumSteps: control.range?.upperBound ?? 126)
             }
             if let volume = monitor.volume {
                 Section("Sound") {

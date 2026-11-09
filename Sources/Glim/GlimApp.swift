@@ -14,6 +14,7 @@ struct GlimApp: App {
             MenuContentView(manager: appDelegate.manager)
                 .environment(\.openMainWindow, OpenMainWindowAction { [appDelegate] in appDelegate.showMainWindow() })
                 .environment(\.glimStore, appDelegate.store)
+                .environment(\.adaptive, appDelegate.adaptive)
         }
         .menuBarExtraStyle(.window)
 

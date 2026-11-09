@@ -66,7 +66,7 @@ struct MonitorSectionView: View {
         }
         if let brightness = monitor.brightness {
             LevelRow(title: "Brightness", control: brightness) {
-                Image(systemName: "sun.max")
+                BrightnessSymbol(monitor: monitor)
             }
         }
         if showContrast, let contrast = monitor.contrast {
@@ -116,3 +116,25 @@ struct NotRespondingView: View {
         }
     }
 }
+
+/// The brightness row's sun: filled, in the accent color, while automatic
+/// brightness drives it; plain otherwise, or while the user has taken over.
+struct BrightnessSymbol: View {
+    let monitor: Monitor
+    @Environment(\.adaptive) private var adaptive
+
+    var body: some View {
+        switch adaptive?.statuses[monitor.id] {
+        case .following?:
+            Image(systemName: "sun.max.fill")
+                .foregroundStyle(Color.accentColor)
+                .help("Brightness: adjusting automatically")
+        case .paused?:
+            Image(systemName: "sun.max")
+                .help("Brightness: automatic, paused because you set it by hand")
+        default:
+            Image(systemName: "sun.max")
+        }
+    }
+}
+
