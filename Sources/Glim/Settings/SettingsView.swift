@@ -2,15 +2,13 @@ import AppKit
 import GlimCore
 import SwiftUI
 
+/// App settings. What Glim knows about each monitor, and Copy Diagnostics,
+/// are in the main window.
 struct SettingsView: View {
-    let manager: MonitorManager
-
     var body: some View {
         TabView {
             GeneralSettingsView()
                 .tabItem { Label("General", systemImage: "gearshape") }
-            DisplaysSettingsView(manager: manager)
-                .tabItem { Label("Displays", systemImage: "display") }
             AboutView()
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
@@ -75,67 +73,6 @@ struct GeneralSettingsView: View {
         .formStyle(.grouped)
         .frame(height: 400)
         .onAppear { login.refresh() }
-    }
-}
-
-struct DisplaysSettingsView: View {
-    let manager: MonitorManager
-    @State private var copied = false
-
-    var body: some View {
-        Form {
-            if manager.monitors.isEmpty {
-                Section {
-                    Text(manager.availability == .available ? "No external display is connected." : "DDC/CI isn't available on this Mac.")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            ForEach(manager.monitors) { monitor in
-                Section(manager.title(for: monitor)) {
-                    LabeledContent("Status", value: statusText(monitor.status))
-                    LabeledContent("Profile", value: profileText(monitor.profile))
-                    if let identity = monitor.identity {
-                        LabeledContent("EDID", value: "\(identity.manufacturerCode) \(String(identity.productID, radix: 16, uppercase: true))")
-                    }
-                    LabeledContent("Speakers", value: monitor.audioDeviceName ?? (monitor.volume == nil ? "Not controlled" : "Over DDC/CI"))
-                }
-            }
-            Section {
-                HStack {
-                    Button("Look for Displays") {
-                        Task { await manager.rescan() }
-                    }
-                    Spacer()
-                    Button(copied ? "Copied" : "Copy Diagnostics") { copyDiagnostics() }
-                }
-            } footer: {
-                Text("Diagnostics list what Glim found and what each control reads, without serial numbers. Attach them to a bug report.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .formStyle(.grouped)
-        .frame(height: 400)
-    }
-
-    private func profileText(_ profile: MonitorProfile) -> String {
-        guard profile.isTested else { return "Untested: controls from the display's own description" }
-        return profile.isTested(.input) ? "Tested with Glim" : "Tested with Glim, except input switching"
-    }
-
-    private func statusText(_ status: Monitor.Status) -> String {
-        switch status {
-        case .connecting: "Connecting…"
-        case .ready: "Connected"
-        case .notResponding: "Not responding"
-        }
-    }
-
-    private func copyDiagnostics() {
-        let report = manager.diagnosticsReport(appVersion: AppInfo.versionString)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(report, forType: .string)
-        copied = true
     }
 }
 

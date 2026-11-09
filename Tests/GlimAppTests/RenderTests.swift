@@ -69,15 +69,13 @@ enum Situation: String, CaseIterable, Sendable {
 
     // MARK: Settings
 
-    @Test func settingsPanes() async throws {
+    @Test func settingsPanes() throws {
         let defaults = try TestDefaults("settings")
-        let (setup, _, _) = try await Setup.readyHP()
-        try snapshot(SettingsView(manager: setup.manager).defaultAppStorage(defaults.store), "settings-general", width: 460)
-        try snapshot(DisplaysPaneHarness(manager: setup.manager), "settings-displays", width: 460)
+        try snapshot(SettingsView().defaultAppStorage(defaults.store), "settings-general", width: 460)
         try snapshot(AboutPaneHarness(), "settings-about", width: 460)
         // Without the menu bar icon, the Dock switch is on and can't be turned off.
         defaults.store.set(false, forKey: Preferences.showMenuBarIcon)
-        try snapshot(SettingsView(manager: setup.manager).defaultAppStorage(defaults.store), "settings-general-no-menu-bar-icon", width: 460)
+        try snapshot(SettingsView().defaultAppStorage(defaults.store), "settings-general-no-menu-bar-icon", width: 460)
     }
 
     @Test func diagnosticsLeaveOutTheSerial() async throws {
@@ -276,13 +274,6 @@ final class TestDefaults {
 
 /// TabView only builds its selected tab, so the other panes are rendered on
 /// their own.
-private struct DisplaysPaneHarness: View {
-    let manager: MonitorManager
-    var body: some View {
-        TabView { DisplaysSettingsView(manager: manager).tabItem { Label("Displays", systemImage: "display") } }
-    }
-}
-
 private struct AboutPaneHarness: View {
     var body: some View {
         TabView { AboutView().tabItem { Label("About", systemImage: "info.circle") } }

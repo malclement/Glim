@@ -37,11 +37,11 @@ The most useful contribution, and the one that needs the most care: a wrong writ
 3. Add the monitor's capabilities string as a test fixture, plus a test that the profile matches.
 4. In the pull request, list each control and how you verified it.
 
-Monitors without a profile already get the standard controls their capabilities string lists. A report that one of those works, or doesn't, is valuable too: open an issue with **Settings › Displays › Copy Diagnostics** attached.
+Monitors without a profile already get the standard controls their capabilities string lists. A report that one of those works, or doesn't, is valuable too: open an issue with the report from **Copy Diagnostics**, in Glim's window, attached.
 
 ## Reporting bugs
 
-Open an issue with what you did, what happened, and the diagnostics from **Settings › Displays › Copy Diagnostics** (they leave out serial numbers). For DDC/CI problems, a debug log helps:
+Open an issue with what you did, what happened, and the diagnostics from **Copy Diagnostics** in Glim's window (they leave out serial numbers). For DDC/CI problems, a debug log helps:
 
 ```sh
 log stream --level debug --predicate 'subsystem == "io.github.malclement.Glim" AND process == "Glim"'

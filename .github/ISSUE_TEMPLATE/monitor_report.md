@@ -19,7 +19,7 @@ labels: monitor
 
 **Diagnostics**
 
-From **Settings › Displays › Copy Diagnostics**. For a monitor Glim has no profile for, this includes its capabilities string, which is what a profile is built from.
+From **Copy Diagnostics** in Glim's window. For a monitor Glim has no profile for, this includes its capabilities string, which is what a profile is built from.
 
 ```
 paste here

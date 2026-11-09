@@ -17,7 +17,7 @@ struct GlimApp: App {
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView(manager: appDelegate.manager)
+            SettingsView()
         }
         .commands { GlimCommands() }
     }

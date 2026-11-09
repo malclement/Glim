@@ -58,9 +58,9 @@ The Xcode Command Line Tools are enough. [docs/development.md](docs/development.
 | Problem | Try |
 | --- | --- |
 | The menu says **Not responding** | The monitor may be asleep or showing another input. Otherwise DDC/CI may be off in its menu (HP: **Management › DDC/CI**). Then choose **Try Again**. |
-| No volume slider | Check that the monitor's USB is connected (USB-C on the HP). **Settings › Displays** shows which speakers Glim found. |
+| No volume slider | Check that the monitor's USB is connected (USB-C on the HP). Glim's window shows which speakers it found, under **Display › Speakers**. |
 | A control is missing | Glim only shows controls the monitor answers for. **Settings › General** can also hide contrast, volume and input from the menu; the window always shows them. |
-| Something else | **Settings › Displays › Copy Diagnostics**, and attach the result to an [issue](https://github.com/malclement/Glim/issues). Serial numbers are left out. |
+| Something else | **Copy Diagnostics** in Glim's window, and attach the result to an [issue](https://github.com/malclement/Glim/issues). Serial numbers are left out. |
 
 ## How it works
 
