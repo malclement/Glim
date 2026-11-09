@@ -144,15 +144,21 @@ private struct VolumeControls: View {
             Label("Volume", systemImage: speakerSymbol(volume: volume, isMuted: mute?.value == true))
         }
         if let mute {
-            Toggle(isOn: Binding(get: { mute.value ?? false }, set: { mute.set($0) })) {
+            // A warning sits beside the control it concerns, as on the other
+            // rows.
+            LabeledContent {
                 HStack(spacing: 6) {
-                    Label("Mute", systemImage: "speaker.slash")
                     if let failure = mute.failure {
                         FailureBadge(failure: failure)
                     }
+                    Toggle("Mute", isOn: Binding(get: { mute.value ?? false }, set: { mute.set($0) }))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .disabled(mute.value == nil)
                 }
+            } label: {
+                Label("Mute", systemImage: "speaker.slash")
             }
-            .disabled(mute.value == nil)
         }
     }
 }
