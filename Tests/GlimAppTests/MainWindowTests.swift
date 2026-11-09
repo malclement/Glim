@@ -360,7 +360,7 @@ import Testing
     // MARK: Wording
 
     @Test func theProfileSaysWhichControlsWereNotTested() {
-        #expect(MonitorText.profile(.hpE27mG4) == "Tested with Glim, except input switching")
+        #expect(MonitorText.profile(.hpE27mG4) == "Tested with Glim, except color temperature, color presets and input switching")
         var profile = MonitorProfile.hpE27mG4
         profile.untested = []
         #expect(MonitorText.profile(profile) == "Tested with Glim")
@@ -405,14 +405,14 @@ import Testing
     }
 
     /// The General pane's switches are, in order: open at login, show in the
-    /// menu bar, always show in the Dock, then the menu's three rows.
+    /// menu bar, always show in the Dock, then the menu's five rows.
     private func placeSwitches(in window: NSWindow) throws -> (menuBar: NSSwitch, dock: NSSwitch) {
         var switches: [NSSwitch] = []
         OffscreenRenderer.spin(until: {
             switches = controls(NSSwitch.self, in: window.contentView)
-            return switches.count == 6
+            return switches.count == 8
         })
-        try #require(switches.count == 6, "found \(switches.count) switches")
+        try #require(switches.count == 8, "found \(switches.count) switches")
         return (switches[1], switches[2])
     }
 

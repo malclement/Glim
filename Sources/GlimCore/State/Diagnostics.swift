@@ -32,6 +32,9 @@ extension MonitorManager {
             lines.append("  status: \(monitor.status)")
             lines.append("  brightness: \(Self.describe(monitor.brightness))")
             lines.append("  contrast: \(Self.describe(monitor.contrast))")
+            let kelvin = monitor.colorTemperature?.value.flatMap { monitor.profile.colorTemperature?.kelvin(for: $0) }
+            lines.append("  color temperature: \(Self.describe(monitor.colorTemperature))\(kelvin.map { " (\($0) K)" } ?? "")")
+            lines.append("  color preset: \(Self.describe(monitor.colorPreset?.control))\(monitor.colorPreset?.currentName.map { " (\($0))" } ?? "")")
             lines.append("  volume: \(Self.describe(monitor.volume))\(monitor.audioDeviceName.map { " via \($0)" } ?? "")")
             lines.append("  mute: \(Self.describe(monitor.mute))")
             lines.append("  input: \(Self.describe(monitor.input?.control))\(monitor.input?.currentName.map { " (\($0))" } ?? "")")

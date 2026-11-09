@@ -4,7 +4,7 @@ Glim reaches the monitor over two independent channels:
 
 | Channel | Carries | macOS API |
 | --- | --- | --- |
-| **DDC/CI** over the display link | brightness, contrast, input | private `IOAVService` I2C functions |
+| **DDC/CI** over the display link | brightness, contrast, color, input | private `IOAVService` I2C functions |
 | **USB Audio** on the monitor's USB hub | speaker volume and mute | CoreAudio |
 
 Everything here was observed on an HP E27m G4 (firmware 1.0) connected over USB-C to an M4 MacBook Air running macOS 26.5. ✅ marks behaviour verified on that hardware; ⚠️ marks behaviour that is implemented but not verified.
@@ -47,10 +47,12 @@ display → host   [0x6E] [0x80 | n] [payload…] [checksum]   checksum = 0x50 ^
 | --- | --- | --- | --- |
 | Get VCP | `01 <code>` | when a monitor connects, each time the menu opens or the window comes forward, and once writes settle | ✅ |
 | Set VCP 0x10 brightness, 0x12 contrast | `03 <code> <hi> <lo>` | while a slider moves | ✅ round trip in the hardware tests |
+| Set VCP 0x0C color temperature | `03 0C 00 <steps>` | while the slider moves; 1 to 126 on the HP. While 0x0C reads 0 (sRGB, native, custom RGB), the first one is preceded by 0x14 ← 05, so the temperature lands in a preset that has one | ✅ written and read back with the CLI; ⚠️ the app's path, and a lone 0x0C write from sRGB, not yet run on the hardware |
+| Set VCP 0x14 color preset | `03 14 00 <value>` | when a preset is picked. The HP reads it back in its own numbering, so the active preset is recognized from 0x14 *and* 0x0C ([controls.md](controls.md#0x14-color-preset-mapping)), and each code is read again after the other settles, since they move together | ✅ same |
 | Set VCP 0x60 input | `03 60 00 <value>` | only after the user confirms the switch, in the menu or the window | ⚠️ never sent to the hardware: the owner deferred input switching ([open-items.md](open-items.md)) |
 | Capabilities | `F3 <offset hi> <offset lo>` | only for monitors Glim has no profile for | ✅ string reassembled from the capture and re-read by the hardware tests |
 
-For a monitor without a profile, Glim can also read and write 0x62 (volume) and 0x8D (mute) when its capabilities list them. That path has never run against such a monitor.
+For a monitor without a profile, Glim can also read and write 0x62 (volume) and 0x8D (mute) when its capabilities list them, and 0x0C and 0x14 when they are listed and answer, with 0x0B giving the kelvin per step. That path has never run against such a monitor.
 
 **What Glim never sends**, by construction: there is no code path to these.
 
@@ -59,10 +61,10 @@ For a monitor without a profile, Glim can also read and write 0x62 (volume) and 
 | `04` restore factory defaults | wipes settings that DDC cannot read back |
 | `D6` power | 04/05 turn the monitor off, and DDC may not reach it again |
 | `CA` OSD lock | locks the monitor's buttons |
-| `0C` save settings | unverified, and unneeded: settings persist without it |
+| `0C` (DDC command) save settings | unverified, and unneeded: settings persist without it |
 | `DC`, `E0`–`FF` vendor codes | HP's sub-code protocol starts every read with a write. `E1` sub-code 04 value 00 turns DDC/CI off, and sub-code 27 value 0A is a master reset. |
 
-Writes reach `DDCChannel.write` from three places: the brightness and contrast sliders, the input picker after its confirmation, and DDC volume and mute on profile-less monitors that list 0x62 and 0x8D. Below all of them, `DDCChannel` refuses any code outside `writableCodes` (0x10, 0x12, 0x60, 0x62, 0x8D), whoever asks.
+Writes reach `DDCChannel.write` from these places only: the brightness, contrast and color temperature sliders, the color preset picker, the input picker after its confirmation, and DDC volume and mute on profile-less monitors that list 0x62 and 0x8D. Below all of them, `DDCChannel` refuses any code outside `writableCodes` (0x0C, 0x10, 0x12, 0x14, 0x60, 0x62, 0x8D), whoever asks.
 
 ### Timing and retries
 

@@ -13,25 +13,39 @@ struct GlimApp: App {
         MenuBarExtra("Glim", systemImage: "sun.max", isInserted: $showsMenuBarIcon) {
             MenuContentView(manager: appDelegate.manager)
                 .environment(\.openMainWindow, OpenMainWindowAction { [appDelegate] in appDelegate.showMainWindow() })
+                .environment(\.glimStore, appDelegate.store)
         }
         .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView()
         }
-        .commands { GlimCommands() }
+        .commands { GlimCommands(store: appDelegate.store, manager: appDelegate.manager) }
     }
 }
 
 /// The menu bar's menus, shown while Glim is a regular app. SwiftUI gives an
 /// app without a document window no File menu, and so no ⌘W.
 struct GlimCommands: Commands {
+    let store: GlimStore
+    let manager: MonitorManager
+
     var body: some Commands {
         CommandGroup(replacing: .saveItem) {
             Button("Close") { Self.close(NSApp.keyWindow) }
                 .keyboardShortcut("w")
         }
         SidebarCommands()
+        CommandMenu("Scenes") {
+            if store.scenes.isEmpty {
+                Text("No Scenes")
+            }
+            ForEach(store.scenes) { scene in
+                Button(scene.name) { scene.apply(to: manager.monitors) }
+                    .modifier(SceneShortcut(digit: store.shortcutDigit(for: scene.id)))
+                    .disabled(scene.connected(in: manager.monitors).isEmpty)
+            }
+        }
         CommandGroup(replacing: .help) {
             Button("Glim Help") { NSWorkspace.shared.open(AppInfo.repositoryURL) }
         }

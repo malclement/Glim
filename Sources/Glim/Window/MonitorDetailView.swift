@@ -7,17 +7,22 @@ import SwiftUI
 struct MonitorDetailView: View {
     let manager: MonitorManager
     let monitor: Monitor
+    @Environment(\.glimStore) private var store
 
     var body: some View {
         Form {
             Section {
-                MonitorHeader(monitor: monitor, title: manager.title(for: monitor))
+                MonitorHeader(monitor: monitor, title: store?.title(for: monitor, in: manager) ?? manager.title(for: monitor))
             }
-            Section("Controls") {
-                MonitorControls(monitor: monitor)
+            MonitorControls(monitor: monitor)
+                .labelStyle(IconColumnLabelStyle())
+            if let store {
+                MenuChoices(store: store, monitor: monitor)
             }
-            .labelStyle(IconColumnLabelStyle())
             Section("Display") {
+                if let store {
+                    DisplayNameField(store: store, monitor: monitor, defaultName: manager.title(for: monitor))
+                }
                 LabeledContent("Model", value: monitor.name)
                 if let identity = monitor.identity {
                     LabeledContent("EDID", value: MonitorText.edid(identity))
@@ -41,6 +46,74 @@ struct MonitorDetailView: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// A name of the user's own. Blank goes back to Glim's, which is the
+/// placeholder.
+private struct DisplayNameField: View {
+    let store: GlimStore
+    let monitor: Monitor
+    let defaultName: String
+    @State private var name = ""
+
+    var body: some View {
+        TextField("Name", text: $name, prompt: Text(defaultName))
+            .onAppear { name = store.preferences(for: monitor.id).name ?? "" }
+            .onChange(of: name) { _, new in store.setName(new, for: monitor.id) }
+    }
+}
+
+/// What this display shows in the menu: whether it shows at all, and which
+/// of its rows. Each choice follows Settings until it is changed here.
+private struct MenuChoices: View {
+    let store: GlimStore
+    let monitor: Monitor
+    @AppStorage(Preferences.showContrast) private var showContrast = true
+    @AppStorage(Preferences.showColor) private var showColor = true
+    @AppStorage(Preferences.showVolume) private var showVolume = true
+    @AppStorage(Preferences.showInput) private var showInput = true
+
+    private func settingsDefault(_ row: MenuRow) -> Bool {
+        switch row {
+        case .contrast: showContrast
+        case .color: showColor
+        case .volume: showVolume
+        case .input: showInput
+        }
+    }
+
+    private var rows: [MenuRow] { MenuRow.allCases.filter { $0.isOffered(by: monitor) } }
+
+    var body: some View {
+        let preferences = store.preferences(for: monitor.id)
+        Section {
+            Toggle("Show this display", isOn: Binding(
+                get: { store.showsInMenu(monitor.id) },
+                set: { shown in store.updateDisplay(monitor.id) { $0.showsInMenu = shown ? nil : false } }
+            ))
+            if store.showsInMenu(monitor.id) {
+                ForEach(rows, id: \.self) { row in
+                    Toggle(row.title, isOn: Binding(
+                        get: { store.shows(row, for: monitor.id, default: settingsDefault(row)) },
+                        set: { store.setShows(row, $0, for: monitor.id) }
+                    ))
+                }
+            }
+        } header: {
+            Text("In the menu")
+        } footer: {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Brightness is always shown. Rows you haven't changed here follow Settings.")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if !preferences.rows.isEmpty || preferences.showsInMenu != nil {
+                    Button("Use Settings") { store.resetMenu(for: monitor.id) }
+                        .controlSize(.small)
+                }
+            }
+        }
     }
 }
 
@@ -79,40 +152,63 @@ private struct MonitorHeader: View {
     }
 }
 
-/// The controls, as form rows. Mirrors the menu's rules: while the monitor
-/// doesn't answer, its DDC/CI controls make way for a retry, and USB speakers,
-/// a separate device, stay.
+/// The controls, as form sections: picture, color, sound, input. Mirrors the
+/// menu's rules: while the monitor doesn't answer, its DDC/CI controls make
+/// way for a retry, and USB speakers, a separate device, stay.
 private struct MonitorControls: View {
     let monitor: Monitor
 
     var body: some View {
         switch monitor.status {
         case .notResponding:
-            NotRespondingView(monitor: monitor)
+            Section("Controls") {
+                NotRespondingView(monitor: monitor)
+            }
             if monitor.hasUSBSpeakers, let volume = monitor.volume {
-                VolumeControls(volume: volume, mute: monitor.mute)
+                Section("Sound") {
+                    VolumeControls(volume: volume, mute: monitor.mute)
+                }
             }
         case .connecting, .ready:
             if !monitor.hasControls {
-                if monitor.status == .connecting {
-                    Text("Reading the display…")
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("This display doesn't offer any control Glim supports.")
+                Section("Controls") {
+                    Text(monitor.status == .connecting ? "Reading the display…" : "This display doesn't offer any control Glim supports.")
                         .foregroundStyle(.secondary)
                 }
             }
-            if let brightness = monitor.brightness {
-                LevelControl(title: "Brightness", symbol: "sun.max", control: brightness)
+            if monitor.brightness != nil || monitor.contrast != nil {
+                Section("Picture") {
+                    if let brightness = monitor.brightness {
+                        LevelControl(title: "Brightness", symbol: "sun.max", control: brightness)
+                    }
+                    if let contrast = monitor.contrast {
+                        LevelControl(title: "Contrast", symbol: "circle.lefthalf.filled", control: contrast)
+                    }
+                }
             }
-            if let contrast = monitor.contrast {
-                LevelControl(title: "Contrast", symbol: "circle.lefthalf.filled", control: contrast)
+            if monitor.colorTemperature != nil || monitor.colorPreset != nil {
+                Section("Color") {
+                    if let temperature = monitor.colorTemperature {
+                        LabeledContent {
+                            ColorTemperatureSlider(monitor: monitor, control: temperature)
+                        } label: {
+                            Label("Temperature", systemImage: "thermometer.medium")
+                        }
+                    }
+                    if let preset = monitor.colorPreset {
+                        ColorPresetControl(selector: preset)
+                    }
+                }
             }
             if let volume = monitor.volume {
-                VolumeControls(volume: volume, mute: monitor.mute)
+                Section("Sound") {
+                    VolumeControls(volume: volume, mute: monitor.mute)
+                }
             }
             if let input = monitor.input {
-                InputControl(selector: input, isTested: monitor.profile.isTested(.input))
+                Section("Input") {
+                    InputControl(selector: input, isTested: monitor.profile.isTested(.input))
+                }
             }
         }
     }
@@ -128,6 +224,25 @@ private struct LevelControl: View {
             LevelSlider(title: title, control: control)
         } label: {
             Label(title, systemImage: symbol)
+        }
+    }
+}
+
+/// The color preset. The factory preset doubles as the reset.
+private struct ColorPresetControl: View {
+    let selector: ColorPresetSelector
+
+    var body: some View {
+        LabeledContent {
+            HStack(spacing: 6) {
+                if let failure = selector.failure {
+                    FailureBadge(failure: failure)
+                }
+                ColorPresetPicker(selector: selector)
+                FactoryColorButton(selector: selector)
+            }
+        } label: {
+            Label("Preset", systemImage: "paintpalette")
         }
     }
 }

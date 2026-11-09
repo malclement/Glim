@@ -31,6 +31,11 @@ enum Situation: String, CaseIterable, Sendable {
     case unidentified
     /// Mute and input writes refused at the bus: their warnings.
     case writesFailed = "writes-failed"
+    /// The HP in sRGB: no temperature, so the slider names the preset.
+    case srgb
+    /// Two scenes, one active; the HP renamed "Desk", its input row hidden
+    /// from the menu, at a warm custom temperature.
+    case scenes
 }
 
 /// Renders the app's real views, in every designed state, in an offscreen
@@ -52,7 +57,7 @@ enum Situation: String, CaseIterable, Sendable {
     @Test(arguments: Situation.allCases)
     func menu(in situation: Situation) async throws {
         let setup = try await Setup.make(situation)
-        try snapshot(MenuContentView(manager: setup.manager), "menu-\(situation.rawValue)")
+        try snapshot(MenuContentView(manager: setup.manager).environment(\.glimStore, setup.store), "menu-\(situation.rawValue)")
         await setup.finish()
     }
 
@@ -62,7 +67,7 @@ enum Situation: String, CaseIterable, Sendable {
     @Test(arguments: Situation.allCases)
     func window(in situation: Situation) async throws {
         let setup = try await Setup.make(situation)
-        let controller = MainWindowController(manager: setup.manager, present: { _ in })
+        let controller = MainWindowController(manager: setup.manager, store: setup.store, present: { _ in })
         try snapshot(controller.prepareWindow(), "window-\(situation.rawValue)")
         await setup.finish()
     }
@@ -74,6 +79,20 @@ enum Situation: String, CaseIterable, Sendable {
         let view = MonitorDetailView(manager: setup.manager, monitor: second)
             .frame(width: 540, height: 620)
         try snapshot(view, "window-detail-second-monitor", width: 540)
+    }
+
+    /// The scenes' editors: "Day", which the display no longer shows (so
+    /// each row says what it shows now), and "Evening", active, with one
+    /// display away.
+    @Test func sceneDetail() async throws {
+        let setup = try await Setup.make(.scenes)
+        let store = try #require(setup.store)
+        for (scene, name) in zip(store.scenes, ["window-scene-detail-day", "window-scene-detail"]) {
+            let view = SceneDetailView(store: store, manager: setup.manager, scene: scene)
+                .frame(width: 540, height: 700)
+            try snapshot(view, name, width: 540)
+        }
+        await setup.finish()
     }
 
     // MARK: Settings
@@ -91,7 +110,7 @@ enum Situation: String, CaseIterable, Sendable {
         let setup = try await Setup.make(.hp)
         let report = setup.manager.diagnosticsReport(appVersion: "test")
         #expect(report.contains("HP E27m G4"))
-        #expect(report.contains("profile: hp-e27m-g4 (tested; untested: input)"))
+        #expect(report.contains("profile: hp-e27m-g4 (tested; untested: colorPreset, colorTemperature, input)"))
         #expect(report.contains("serial present"))
         #expect(!report.contains("TEST0000001"))
     }
@@ -125,6 +144,8 @@ enum Situation: String, CaseIterable, Sendable {
 struct Setup {
     let manager: MonitorManager
     let platform: FakePlatform
+    /// Scenes and display choices, in memory; nil where they don't matter.
+    var store: GlimStore?
     private var cleanup: (@MainActor () async -> Void)?
 
     static let hpAudio = AudioDeviceInfo(id: 97, name: "HP E27m G4 USB Audio", isUSB: true)
@@ -156,6 +177,7 @@ struct Setup {
         let loaded = await eventually {
             monitor.brightness?.value == 72 && monitor.contrast?.value != nil
                 && monitor.volume?.value != nil && monitor.mute?.value != nil && monitor.input?.current != nil
+                && monitor.colorTemperature?.value != nil && monitor.colorPreset?.current != nil
         }
         #expect(loaded)
         return (Setup(manager: manager, platform: platform), monitor, simulated)
@@ -165,6 +187,36 @@ struct Setup {
         switch situation {
         case .hp:
             return try await readyHP().0
+
+        case .srgb:
+            let (setup, monitor, _) = try await readyHP()
+            let srgb = try #require(monitor.colorPreset?.options.first { $0.name == "sRGB" })
+            monitor.colorPreset?.select(srgb)
+            #expect(await eventually { monitor.colorTemperature?.value == 0 && monitor.colorPreset?.isWriting == false })
+            #expect(MonitorText.colorTemperature(of: monitor) == "sRGB")
+            return setup
+
+        case .scenes:
+            var (setup, monitor, _) = try await readyHP()
+            let store = GlimStore(defaults: nil)
+            let day = store.addScene(capturing: setup.manager.monitors)
+            store.rename(day.id, to: "Day")
+            store.updateScene(day.id) { $0.symbol = "sun.max" }
+            monitor.brightness?.set(30)
+            monitor.colorTemperature?.set(40)
+            #expect(await eventually { monitor.colorPreset?.current?.name == "5000 K" && monitor.brightness?.isWriting == false })
+            let evening = store.addScene(capturing: setup.manager.monitors)
+            store.rename(evening.id, to: "Evening")
+            store.updateScene(evening.id) { scene in
+                scene.includes = [.brightness, .color]
+                scene.symbol = "moon.stars"
+                scene.monitors["AOC-U34G2G4R3"] = .init(monitorName: "U34G2G4R3", brightness: .init(value: 40, maximum: 100),
+                                                        color: .temperature(steps: 25, kelvin: 5500))
+            }
+            store.setName("Desk", for: monitor.id)
+            store.setShows(.input, false, for: monitor.id)
+            setup.store = store
+            return setup
 
         case .confirmInput:
             let (setup, monitor, _) = try await readyHP()

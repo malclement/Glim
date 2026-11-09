@@ -7,10 +7,12 @@ import GlimCore
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let manager: MonitorManager
+    /// Scenes and per-display choices.
+    let store: GlimStore
     /// Whether Glim is in the Dock.
     let presence: AppPresence
     private(set) lazy var mainWindow = MainWindowController(
-        manager: manager, frameAutosaveName: frameAutosaveName, present: present
+        manager: manager, store: store, frameAutosaveName: frameAutosaveName, present: present
     ) { [weak self] isOpen in
         self?.presence.isWindowOpen = isOpen
     }
@@ -32,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          setPolicy: @escaping @MainActor (NSApplication.ActivationPolicy) -> Void = { _ = NSApp.setActivationPolicy($0) },
          isAnotherCopyRunning: @escaping @MainActor () -> Bool = AppDelegate.anotherCopyIsRunning) {
         self.manager = manager
+        self.store = GlimStore(defaults: defaults)
         self.presence = AppPresence(defaults: defaults, setPolicy: setPolicy)
         self.frameAutosaveName = frameAutosaveName
         self.present = present

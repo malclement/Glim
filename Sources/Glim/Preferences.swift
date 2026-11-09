@@ -1,11 +1,15 @@
 import Foundation
 
-/// `UserDefaults` keys. Glim keeps no other state of its own: monitor values
-/// always come from the monitor.
+/// `UserDefaults` keys. Besides these, ``GlimStore`` keeps scenes and
+/// per-display choices. Monitor values always come from the monitor.
 enum Preferences {
     static let showContrast = "showContrast"
+    /// Color temperature and preset.
+    static let showColor = "showColor"
     static let showVolume = "showVolume"
     static let showInput = "showInput"
+    /// The scenes, below the displays.
+    static let showScenes = "showScenes"
     /// Whether the sun is in the menu bar. On by default.
     static let showMenuBarIcon = "showMenuBarIcon"
     /// Whether Glim stays in the Dock while its window is closed. Off by

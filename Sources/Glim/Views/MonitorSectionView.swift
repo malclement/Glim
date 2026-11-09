@@ -5,9 +5,21 @@ import SwiftUI
 struct MonitorSectionView: View {
     let monitor: Monitor
     let title: String
-    @AppStorage(Preferences.showContrast) private var showContrast = true
-    @AppStorage(Preferences.showVolume) private var showVolume = true
-    @AppStorage(Preferences.showInput) private var showInput = true
+    @Environment(\.glimStore) private var store
+    @AppStorage(Preferences.showContrast) private var showContrastByDefault = true
+    @AppStorage(Preferences.showColor) private var showColorByDefault = true
+    @AppStorage(Preferences.showVolume) private var showVolumeByDefault = true
+    @AppStorage(Preferences.showInput) private var showInputByDefault = true
+
+    // The display's own choice, else the Settings default.
+    private var showContrast: Bool { shows(.contrast, default: showContrastByDefault) }
+    private var showColor: Bool { shows(.color, default: showColorByDefault) }
+    private var showVolume: Bool { shows(.volume, default: showVolumeByDefault) }
+    private var showInput: Bool { shows(.input, default: showInputByDefault) }
+
+    private func shows(_ row: MenuRow, default fallback: Bool) -> Bool {
+        store?.shows(row, for: monitor.id, default: fallback) ?? fallback
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -61,6 +73,12 @@ struct MonitorSectionView: View {
             LevelRow(title: "Contrast", control: contrast) {
                 Image(systemName: "circle.lefthalf.filled")
             }
+        }
+        if showColor, let temperature = monitor.colorTemperature {
+            ColorTemperatureRow(monitor: monitor, control: temperature)
+        }
+        if showColor, let preset = monitor.colorPreset {
+            ColorPresetRow(selector: preset)
         }
         if showVolume, let volume = monitor.volume {
             VolumeRow(volume: volume, mute: monitor.mute)

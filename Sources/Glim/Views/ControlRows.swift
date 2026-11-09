@@ -23,16 +23,22 @@ struct LevelRow<Symbol: View>: View {
 struct LevelSlider: View {
     let title: String
     let control: DeviceControl<Double>
+    /// The value as shown, once read. Percent of the range unless given.
+    var valueText: ((Double) -> String)?
+    /// Wide enough for the badge and the longest value ("6500 K"). The same
+    /// for every level, so the sliders line up.
+    static let valueWidth: CGFloat = 66
 
     private var range: ClosedRange<Double> { control.range ?? 0...100 }
 
-    private var percentText: String {
+    private var shownValue: String {
         guard let value = control.value else { return "–" }
+        if let valueText { return valueText(value) }
         return "\(Int((fraction(of: value, in: range) * 100).rounded()))%"
     }
 
     private var accessibilityValue: String {
-        let value = control.value == nil ? "Unknown" : percentText
+        let value = control.value == nil ? "Unknown" : shownValue
         return control.failure.map { "\(value). \($0.message)" } ?? value
     }
 
@@ -54,11 +60,13 @@ struct LevelSlider: View {
                 if let failure = control.failure {
                     FailureBadge(failure: failure)
                 }
-                Text(percentText)
+                Text(shownValue)
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
-            .frame(width: 54, alignment: .trailing)
+            .frame(width: Self.valueWidth, alignment: .trailing)
             // The slider's accessibility value already says all of this.
             .accessibilityHidden(true)
         }
@@ -102,6 +110,127 @@ struct VolumeRow: View {
                     .accessibilityHidden(true)
             }
             LevelSlider(title: "Volume", control: volume)
+        }
+    }
+}
+
+/// The color temperature, from warm on the left to cool on the right, in
+/// kelvin. While the monitor is in a preset without a temperature (sRGB,
+/// native, custom RGB), the value names that preset instead, and moving the
+/// slider brings back a temperature.
+struct ColorTemperatureSlider: View {
+    let monitor: Monitor
+    let control: DeviceControl<Double>
+
+    /// sRGB, native or custom RGB: the thumb's position means nothing until
+    /// the slider is moved.
+    private var hasNoTemperature: Bool { control.value == 0 }
+
+    var body: some View {
+        LevelSlider(title: "Color temperature", control: control,
+                    valueText: { _ in MonitorText.colorTemperature(of: monitor) })
+            .opacity(hasNoTemperature ? 0.6 : 1)
+            .help(hasNoTemperature ? "This preset has no temperature. Move the slider to set one." : "Warmer to the left, cooler to the right")
+    }
+}
+
+/// The color temperature as a menu row.
+struct ColorTemperatureRow: View {
+    let monitor: Monitor
+    let control: DeviceControl<Double>
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "thermometer.medium")
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+                .help("Color temperature: warmer to the left")
+                .accessibilityHidden(true)
+            ColorTemperatureSlider(monitor: monitor, control: control)
+        }
+    }
+}
+
+/// The color preset as a menu row.
+struct ColorPresetRow: View {
+    let selector: ColorPresetSelector
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "paintpalette")
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+                .accessibilityHidden(true)
+            Text("Color")
+            if let failure = selector.failure {
+                FailureBadge(failure: failure)
+            }
+            Spacer(minLength: 8)
+            ColorPresetPicker(selector: selector)
+            FactoryColorButton(selector: selector)
+        }
+    }
+}
+
+/// Puts the factory preset back in one click. Takes its place, without
+/// moving the picker, while the factory preset is active, or there is none.
+struct FactoryColorButton: View {
+    let selector: ColorPresetSelector
+
+    var body: some View {
+        let factory = selector.factory
+        let isAtFactory = factory == nil || selector.current == factory
+        Button {
+            if let factory { selector.select(factory) }
+        } label: {
+            Image(systemName: "arrow.counterclockwise")
+                .frame(width: 16)
+        }
+        .buttonStyle(.borderless)
+        .help(factory.map { "Back to \($0.name)" } ?? "")
+        .accessibilityLabel(factory.map { "Back to \($0.name)" } ?? "Factory color")
+        .disabled(isAtFactory || selector.value == nil)
+        .opacity(isAtFactory ? 0 : 1)
+        .accessibilityHidden(isAtFactory)
+    }
+}
+
+/// The presets to pick from, or a dash until the active one has been read.
+/// A pick is written at once: presets are harmless, and the factory one is
+/// always in the list to come back to.
+struct ColorPresetPicker: View {
+    let selector: ColorPresetSelector
+
+    private var selection: Binding<ColorPresetValue> {
+        Binding(
+            get: { selector.value ?? .other(reading: 0, temperature: nil) },
+            set: { value in
+                if let option = selector.presets.option(for: value) { selector.select(option) }
+            }
+        )
+    }
+
+    var body: some View {
+        if let value = selector.value {
+            Picker("Color preset", selection: selection) {
+                ForEach(selector.options) { option in
+                    Text(option.name).tag(ColorPresetValue.preset(option.value))
+                }
+                // Whatever else is active still needs a row, or the picker
+                // would show nothing.
+                if selector.current == nil {
+                    Divider()
+                    Text(selector.currentName ?? "Other").tag(value)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+            .accessibilityLabel("Color preset")
+        } else {
+            Text("–")
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Unknown color preset")
         }
     }
 }

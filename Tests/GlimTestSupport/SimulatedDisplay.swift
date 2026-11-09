@@ -21,6 +21,9 @@ package final class SimulatedDisplay: Sendable {
         package var capabilities: [UInt8] = []
         /// Codes that accept writes and ignore them, like the HP's 0x62.
         package var ignoresWrites: Set<UInt8> = []
+        /// 0x0C and 0x14 move together as on the HP E27m G4, which reads
+        /// 0x14 back in its own numbering (``hpColorPresets``).
+        package var hpColorCoupling = false
         package var reply: [UInt8]?
         /// Every frame written, including repeats.
         package var frames: [[UInt8]] = []
@@ -36,6 +39,9 @@ package final class SimulatedDisplay: Sendable {
         /// Nothing is answered: replies are null messages, like a display
         /// with DDC/CI turned off.
         package var silent = false
+        /// Gets of these codes get no answer, while the rest work: a read
+        /// lost on a busy bus.
+        package var silentCodes: Set<UInt8> = []
         /// The first Get of a code after a Set of it reads 0 (an HP quirk).
         package var zeroAfterSet = false
         package var zeroPending: Set<UInt8> = []
@@ -61,13 +67,17 @@ package final class SimulatedDisplay: Sendable {
     package static func hp(capabilities: String = "") -> SimulatedDisplay {
         SimulatedDisplay { state in
             state.values = [
+                0x0B: Value(current: 50, maximum: 50),
+                0x0C: Value(current: 70, maximum: 126),
                 0x10: Value(current: 100, maximum: 100),
                 0x12: Value(current: 100, maximum: 100),
+                0x14: Value(current: 8, maximum: 12),
                 0x60: Value(current: 0x13, maximum: 0x13),
                 0x62: Value(current: 30, maximum: 100),
                 0x8D: Value(current: 2, maximum: 2),
             ]
             state.ignoresWrites = [0x62]
+            state.hpColorCoupling = true
             state.capabilities = Array(capabilities.utf8)
         }
     }
@@ -114,7 +124,9 @@ package final class SimulatedDisplay: Sendable {
         switch payload.first {
         case 0x01 where payload.count == 2:
             let code = payload[1]
-            if let value = state.values[code] {
+            if state.silentCodes.contains(code) {
+                state.reply = nil
+            } else if let value = state.values[code] {
                 let current = state.zeroPending.remove(code) != nil ? 0 : value.current
                 state.reply = Self.reply([0x02, 0x00, code, 0x00,
                                           UInt8(value.maximum >> 8), UInt8(value.maximum & 0xFF),
@@ -126,8 +138,10 @@ package final class SimulatedDisplay: Sendable {
             let code = payload[1]
             state.reply = nil
             guard !state.ignoresWrites.contains(code), state.values[code] != nil else { break }
-            state.values[code]?.current = UInt16(payload[2]) << 8 | UInt16(payload[3])
+            let value = UInt16(payload[2]) << 8 | UInt16(payload[3])
+            state.values[code]?.current = value
             if state.zeroAfterSet { state.zeroPending.insert(code) }
+            if state.hpColorCoupling { coupleColor(code: code, value: value, in: &state) }
         case 0xF3 where payload.count == 3:
             let offset = Int(payload[1]) << 8 | Int(payload[2])
             if state.capabilitiesSilent || state.capabilitiesFailFrom.map({ offset >= $0 }) == true {
@@ -138,6 +152,37 @@ package final class SimulatedDisplay: Sendable {
             state.reply = Self.reply([0xE3, payload[1], payload[2]] + fragment)
         default:
             state.reply = nil
+        }
+    }
+
+    /// What the HP E27m G4 reads back after a 0x14 write: (0x14, 0x0C).
+    /// Measured on the hardware (docs/controls.md, "0x14 color-preset
+    /// mapping"); the tests check it against the fixture.
+    package static let hpColorPresets: [UInt16: (preset: UInt16, temperature: UInt16)] = [
+        0x01: (1, 0), 0x02: (10, 0), 0x03: (3, 0), 0x04: (5, 40), 0x05: (8, 70),
+        0x06: (6, 0), 0x07: (6, 0), 0x08: (2, 126), 0x09: (2, 126), 0x0A: (11, 0),
+        0x0B: (15, 0), 0x0C: (2, 0), 0x0D: (4, 0),
+    ]
+
+    /// What 0x14 reads after 0x0C is set to each measured value. Between
+    /// them the simulator takes the nearest one, which is a guess: the
+    /// bucket edges were never measured.
+    package static let hpTemperatureBuckets: [(temperature: UInt16, preset: UInt16)] = [
+        (0, 15), (40, 5), (55, 8), (70, 8), (100, 2), (126, 2),
+    ]
+
+    private static func coupleColor(code: UInt8, value: UInt16, in state: inout State) {
+        switch code {
+        case 0x14:
+            guard let reading = hpColorPresets[value] else { return }
+            state.values[0x14]?.current = reading.preset
+            state.values[0x0C]?.current = reading.temperature
+        case 0x0C:
+            let candidates = hpTemperatureBuckets.filter { ($0.temperature == 0) == (value == 0) }
+            let nearest = candidates.min { abs(Int($0.temperature) - Int(value)) < abs(Int($1.temperature) - Int(value)) }
+            if let nearest { state.values[0x14]?.current = nearest.preset }
+        default:
+            break
         }
     }
 

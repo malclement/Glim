@@ -22,7 +22,7 @@ public struct MonitorProfile: Sendable, Equatable {
 
     /// A control a profile can offer.
     public enum Control: Sendable, Hashable {
-        case brightness, contrast, volume, mute, input
+        case brightness, contrast, colorTemperature, colorPreset, volume, mute, input
     }
 
     public var id: String
@@ -34,6 +34,10 @@ public struct MonitorProfile: Sendable, Equatable {
     public var untested: Set<Control>
     public var brightness: Bool
     public var contrast: Bool
+    /// The color temperature (0x0C), or nil to offer none.
+    public var colorTemperature: ColorTemperatureScale?
+    /// The color presets (0x14), or nil to offer none.
+    public var colorPresets: ColorPresets?
     public var volume: VolumeRoute?
     /// The inputs offered, or nil to offer none.
     public var inputs: [InputOption]?
@@ -42,12 +46,15 @@ public struct MonitorProfile: Sendable, Equatable {
     public var ddcHelp: String
 
     public init(id: String, isTested: Bool, untested: Set<Control> = [], brightness: Bool, contrast: Bool,
+                colorTemperature: ColorTemperatureScale? = nil, colorPresets: ColorPresets? = nil,
                 volume: VolumeRoute?, inputs: [InputOption]?, ddcHelp: String) {
         self.id = id
         self.isTested = isTested
         self.untested = untested
         self.brightness = brightness
         self.contrast = contrast
+        self.colorTemperature = colorTemperature
+        self.colorPresets = colorPresets
         self.volume = volume
         self.inputs = inputs
         self.ddcHelp = ddcHelp
@@ -79,6 +86,14 @@ public struct MonitorProfile: Sendable, Equatable {
     /// - Volume and mute: the speakers are a USB Audio device, set and read
     ///   back. DDC 0x62 accepts writes and ignores them; it only mirrors the
     ///   USB level.
+    /// - Color temperature 0x0C and preset 0x14: written and read back by the
+    ///   CLI (docs/controls.md, "0x14 color-preset mapping"), but not yet by
+    ///   the app's controls, so they stay untested until `make
+    ///   hardware-test` passes with the monitor attached. 0x14 reads back in
+    ///   HP's numbering, and one reading can stand for several presets, so a
+    ///   preset is recognized by 0x14 and 0x0C together. Only the presets
+    ///   whose effect the measurements pin down are offered; 03, 06, 07, 0A
+    ///   and the user presets wait for someone to look at the screen.
     /// - Inputs: the three values in the monitor's capabilities string, with
     ///   HP's names (0x13 is HP's USB-C value; MCCS reserves it). **Never
     ///   written to the hardware**: the owner deferred input switching, and
@@ -86,9 +101,25 @@ public struct MonitorProfile: Sendable, Equatable {
     public static let hpE27mG4 = MonitorProfile(
         id: "hp-e27m-g4",
         isTested: true,
-        untested: [.input],
+        untested: [.input, .colorTemperature, .colorPreset],
         brightness: true,
         contrast: true,
+        // 0x0B reads 50. Leaving sRGB or native for a temperature goes
+        // through 6500 K, a preset that has one.
+        colorTemperature: ColorTemperatureScale(increment: 50, kelvinPreset: 0x05),
+        colorPresets: ColorPresets(
+            options: [
+                ColorPresetOption(value: 0x01, name: "sRGB", reading: 1, temperature: 0),
+                ColorPresetOption(value: 0x02, name: "Native", reading: 10, temperature: 0),
+                ColorPresetOption(value: 0x04, name: "5000 K", reading: 5, temperature: 40),
+                ColorPresetOption(value: 0x05, name: "6500 K (factory)", reading: 8, temperature: 70),
+                ColorPresetOption(value: 0x08, name: "9300 K", reading: 2, temperature: 126),
+            ],
+            factory: 0x05,
+            readsTemperature: true,
+            // Any RGB gain write, user 1, and 0x0C = 0 all read 15.
+            otherNames: [15: "Custom RGB"]
+        ),
         volume: .usbAudio(deviceNamePrefix: "HP E27m G4"),
         inputs: [
             InputOption(value: 0x0F, name: "DisplayPort"),
@@ -100,10 +131,12 @@ public struct MonitorProfile: Sendable, Equatable {
 
     /// A monitor Glim has no profile for. Brightness and contrast are always
     /// tried, since nearly every DDC/CI monitor has them and a capabilities
-    /// string can omit codes the monitor answers; volume and inputs need the
-    /// capabilities string, which gives the input values. A control is only
-    /// shown once it answers a read.
-    public static func generic(capabilities: MonitorCapabilities?) -> MonitorProfile {
+    /// string can omit codes the monitor answers; volume, inputs and color
+    /// need the capabilities string, which gives the input and preset values.
+    /// The color temperature also needs the increment the monitor reports in
+    /// 0x0B (`temperatureIncrement`), without which there is no kelvin value
+    /// to show. A control is only shown once it answers a read.
+    public static func generic(capabilities: MonitorCapabilities?, temperatureIncrement: UInt16? = nil) -> MonitorProfile {
         let inputs = capabilities.map { caps in
             caps.values(for: .inputSource).map { InputOption(value: UInt16($0), name: InputSourceNames.name(for: UInt16($0))) }
         }
@@ -112,10 +145,20 @@ public struct MonitorProfile: Sendable, Equatable {
             isTested: false,
             brightness: true,
             contrast: true,
+            colorTemperature: colorTemperature(capabilities: capabilities, increment: temperatureIncrement),
+            colorPresets: capabilities.flatMap { ColorPresets.standard(listed: $0.values(for: .colorPreset)) },
             volume: capabilities?.lists(.audioVolume) == true ? .ddc : nil,
             // A single listed input is no choice at all.
             inputs: (inputs?.count ?? 0) >= 2 ? inputs : nil,
             ddcHelp: "If DDC/CI is off, turn it on in the display's own menu."
         )
+    }
+
+    private static func colorTemperature(capabilities: MonitorCapabilities?, increment: UInt16?) -> ColorTemperatureScale? {
+        guard let capabilities, capabilities.lists(.colorTemperature), let increment, increment > 0 else { return nil }
+        // Leave a preset without a temperature through 6500 K, if the
+        // monitor lists it.
+        let kelvinPreset: UInt16? = capabilities.values(for: .colorPreset).contains(0x05) ? 0x05 : nil
+        return ColorTemperatureScale(increment: increment, kelvinPreset: kelvinPreset)
     }
 }

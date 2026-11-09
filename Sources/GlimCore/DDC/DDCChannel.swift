@@ -87,7 +87,9 @@ public actor DDCChannel: DDCDevice {
     /// the UI, whatever the caller: some codes blank the screen, turn DDC/CI
     /// off or wipe settings (docs/protocol.md). Extending this is a deliberate
     /// change.
-    public static let writableCodes: Set<VCPCode> = [.brightness, .contrast, .inputSource, .audioVolume, .audioMute]
+    public static let writableCodes: Set<VCPCode> = [
+        .brightness, .contrast, .colorTemperature, .colorPreset, .inputSource, .audioVolume, .audioMute,
+    ]
 
     public nonisolated var unownedExecutor: UnownedSerialExecutor {
         queue.asUnownedSerialExecutor()
