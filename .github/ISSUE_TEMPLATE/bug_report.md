@@ -14,7 +14,7 @@ labels: bug
 
 **Diagnostics**
 
-In Glim, open **Settings › Displays**, click **Copy Diagnostics** and paste the result here. It leaves out serial numbers.
+In Glim's window, click **Copy Diagnostics** and paste the result here. It leaves out serial numbers.
 
 ```
 paste here

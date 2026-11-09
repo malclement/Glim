@@ -2,15 +2,13 @@ import AppKit
 import GlimCore
 import SwiftUI
 
+/// App settings. What Glim knows about each monitor, and Copy Diagnostics,
+/// are in the main window.
 struct SettingsView: View {
-    let manager: MonitorManager
-
     var body: some View {
         TabView {
             GeneralSettingsView()
                 .tabItem { Label("General", systemImage: "gearshape") }
-            DisplaysSettingsView(manager: manager)
-                .tabItem { Label("Displays", systemImage: "display") }
             AboutView()
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
@@ -20,6 +18,8 @@ struct SettingsView: View {
 
 struct GeneralSettingsView: View {
     @State private var login = LaunchAtLogin()
+    @AppStorage(Preferences.showMenuBarIcon) private var showsMenuBarIcon = true
+    @AppStorage(Preferences.alwaysShowDockIcon) private var alwaysShowsDockIcon = false
     @AppStorage(Preferences.showContrast) private var showContrast = true
     @AppStorage(Preferences.showVolume) private var showVolume = true
     @AppStorage(Preferences.showInput) private var showInput = true
@@ -43,6 +43,26 @@ struct GeneralSettingsView: View {
                 }
             }
             Section {
+                Toggle("Show in the menu bar", isOn: $showsMenuBarIcon)
+                // Without the menu bar icon, the Dock is the way back to Glim,
+                // so it stays there. The switch shows AppPresence's own rule
+                // with the window closed.
+                Toggle("Always show in the Dock", isOn: Binding(
+                    get: {
+                        AppPresence.showsDockIcon(isWindowOpen: false, alwaysShowDockIcon: alwaysShowsDockIcon,
+                                                  showsMenuBarIcon: showsMenuBarIcon)
+                    },
+                    set: { alwaysShowsDockIcon = $0 }
+                ))
+                .disabled(!showsMenuBarIcon)
+            } footer: {
+                Text(showsMenuBarIcon
+                     ? "Otherwise Glim is in the Dock only while its window is open."
+                     : "Glim stays in the Dock while it isn't in the menu bar.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Section {
                 Toggle("Contrast", isOn: $showContrast)
                 Toggle("Volume", isOn: $showVolume)
                 Toggle("Input", isOn: $showInput)
@@ -51,73 +71,14 @@ struct GeneralSettingsView: View {
             } footer: {
                 Text("Brightness is always shown. Controls a display doesn't offer are never shown.")
                     .foregroundStyle(.secondary)
+                    // A grouped form aligns wrapped lines to the trailing edge.
+                    .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .formStyle(.grouped)
-        .frame(height: 290)
+        .frame(height: 400)
         .onAppear { login.refresh() }
-    }
-}
-
-struct DisplaysSettingsView: View {
-    let manager: MonitorManager
-    @State private var copied = false
-
-    var body: some View {
-        Form {
-            if manager.monitors.isEmpty {
-                Section {
-                    Text(manager.availability == .available ? "No external display is connected." : "DDC/CI isn't available on this Mac.")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            ForEach(manager.monitors) { monitor in
-                Section(manager.title(for: monitor)) {
-                    LabeledContent("Status", value: statusText(monitor.status))
-                    LabeledContent("Profile", value: profileText(monitor.profile))
-                    if let identity = monitor.identity {
-                        LabeledContent("EDID", value: "\(identity.manufacturerCode) \(String(identity.productID, radix: 16, uppercase: true))")
-                    }
-                    LabeledContent("Speakers", value: monitor.audioDeviceName ?? (monitor.volume == nil ? "Not controlled" : "Over DDC/CI"))
-                }
-            }
-            Section {
-                HStack {
-                    Button("Look for Displays") {
-                        Task { await manager.rescan() }
-                    }
-                    Spacer()
-                    Button(copied ? "Copied" : "Copy Diagnostics") { copyDiagnostics() }
-                }
-            } footer: {
-                Text("Diagnostics list what Glim found and what each control reads, without serial numbers. Attach them to a bug report.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .formStyle(.grouped)
-        .frame(height: 290)
-    }
-
-    private func profileText(_ profile: MonitorProfile) -> String {
-        guard profile.isTested else { return "Untested: controls from the display's own description" }
-        return profile.isTested(.input) ? "Tested with Glim" : "Tested with Glim, except input switching"
-    }
-
-    private func statusText(_ status: Monitor.Status) -> String {
-        switch status {
-        case .connecting: "Connecting…"
-        case .ready: "Connected"
-        case .notResponding: "Not responding"
-        }
-    }
-
-    private func copyDiagnostics() {
-        let report = manager.diagnosticsReport(appVersion: AppInfo.versionString)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(report, forType: .string)
-        copied = true
     }
 }
 
@@ -133,7 +94,7 @@ struct AboutView: View {
             Text("Version \(AppInfo.versionString)")
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
-            Text("Brightness, contrast, volume and input for your external display, from the menu bar.")
+            Text("Brightness, contrast, volume and input for your external display, from the menu bar or Glim's window.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 40)
@@ -145,7 +106,7 @@ struct AboutView: View {
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 290)
+        .frame(height: 400)
     }
 }
 

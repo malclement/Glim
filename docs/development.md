@@ -70,7 +70,7 @@ Afterwards, unregister it from LaunchServices, or `open` can later resolve the i
 
 ## Logs
 
-Glim logs to the unified log under the subsystem `io.github.malclement.Glim`, with the categories `ddc`, `discovery`, `audio` and `state`. Every DDC frame is logged at debug level, which macOS shows live but does not keep:
+Glim logs to the unified log under the subsystem `io.github.malclement.Glim`, with the categories `ddc`, `discovery`, `audio`, `state` and `app` (the window and the Dock). Every DDC frame is logged at debug level, which macOS shows live but does not keep:
 
 ```sh
 log stream --level debug --predicate 'subsystem == "io.github.malclement.Glim" AND process == "Glim"'

@@ -62,6 +62,11 @@ struct LevelSlider: View {
             // The slider's accessibility value already says all of this.
             .accessibilityHidden(true)
         }
+        // SwiftUI never ends a drag on a slider it removes, for instance when
+        // the monitor stops answering mid-drag, and reads stay held off until
+        // the drag ends. The menu also ends drags as it opens and closes, but
+        // the window can stay open for hours, so a slider ends its own.
+        .onDisappear { control.endInteraction() }
     }
 }
 
@@ -72,16 +77,7 @@ struct VolumeRow: View {
 
     private var isMuted: Bool { mute?.value == true }
 
-    private var symbol: String {
-        if isMuted { return "speaker.slash.fill" }
-        // Relative to the range: USB volume runs 0–1, DDC volume 0–100.
-        switch fraction(of: volume.value ?? 0, in: volume.range ?? 0...1) {
-        case ..<0.01: return "speaker.fill"
-        case ..<0.34: return "speaker.wave.1.fill"
-        case ..<0.67: return "speaker.wave.2.fill"
-        default: return "speaker.wave.3.fill"
-        }
-    }
+    private var symbol: String { speakerSymbol(volume: volume, isMuted: isMuted) }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -118,17 +114,6 @@ struct InputRow: View {
     /// Whether switching inputs was ever tried on this model.
     let isTested: Bool
 
-    private var selection: Binding<UInt16> {
-        Binding(
-            get: { selector.pendingSelection?.value ?? selector.value ?? 0 },
-            set: { value in
-                if let option = selector.options.first(where: { $0.value == value }) {
-                    selector.request(option)
-                }
-            }
-        )
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -141,13 +126,7 @@ struct InputRow: View {
                     FailureBadge(failure: failure)
                 }
                 Spacer(minLength: 8)
-                if selector.value == nil {
-                    Text("–")
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("Unknown input")
-                } else {
-                    picker
-                }
+                InputPicker(selector: selector)
             }
             if let pending = selector.pendingSelection {
                 InputConfirmation(selector: selector, target: pending, isTested: isTested)
@@ -156,26 +135,50 @@ struct InputRow: View {
         }
         .animation(.easeOut(duration: 0.15), value: selector.pendingSelection)
     }
+}
 
-    private var picker: some View {
-        Picker("Input", selection: selection) {
-            ForEach(selector.options) { option in
-                Text(option.name).tag(option.value)
+/// The inputs to pick from, or a dash until the active one has been read.
+/// Picking only stages the switch: see ``InputConfirmation``.
+struct InputPicker: View {
+    let selector: InputSelector
+
+    private var selection: Binding<UInt16> {
+        Binding(
+            get: { selector.pendingSelection?.value ?? selector.value ?? 0 },
+            set: { value in
+                if let option = selector.options.first(where: { $0.value == value }) {
+                    selector.request(option)
+                }
             }
-            // An active input that is not one of the options still
-            // needs a row, or the picker would show nothing.
-            if let value = selector.value, selector.current == nil {
-                Text(selector.currentName ?? "Unknown").tag(value)
+        )
+    }
+
+    var body: some View {
+        if selector.value == nil {
+            Text("–")
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Unknown input")
+        } else {
+            Picker("Input", selection: selection) {
+                ForEach(selector.options) { option in
+                    Text(option.name).tag(option.value)
+                }
+                // An active input that is not one of the options still
+                // needs a row, or the picker would show nothing.
+                if let value = selector.value, selector.current == nil {
+                    Text(selector.currentName ?? "Unknown").tag(value)
+                }
             }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+            .accessibilityLabel("Input")
         }
-        .labelsHidden()
-        .pickerStyle(.menu)
-        .fixedSize()
-        .accessibilityLabel("Input")
     }
 }
 
-private struct InputConfirmation: View {
+/// Asks before switching inputs, in the menu and in the window alike.
+struct InputConfirmation: View {
     let selector: InputSelector
     let target: InputOption
     let isTested: Bool
@@ -220,6 +223,20 @@ struct FailureBadge: View {
             .font(.caption)
             .help(failure.message)
             .accessibilityLabel(failure.message)
+    }
+}
+
+/// The speaker symbol for a volume: slashed when muted, else one to three
+/// waves.
+@MainActor
+func speakerSymbol(volume: DeviceControl<Double>, isMuted: Bool) -> String {
+    if isMuted { return "speaker.slash.fill" }
+    // Relative to the range: USB volume runs 0–1, DDC volume 0–100.
+    switch fraction(of: volume.value ?? 0, in: volume.range ?? 0...1) {
+    case ..<0.01: return "speaker.fill"
+    case ..<0.34: return "speaker.wave.1.fill"
+    case ..<0.67: return "speaker.wave.2.fill"
+    default: return "speaker.wave.3.fill"
     }
 }
 
