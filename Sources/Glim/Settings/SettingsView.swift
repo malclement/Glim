@@ -45,9 +45,13 @@ struct GeneralSettingsView: View {
             Section {
                 Toggle("Show in the menu bar", isOn: $showsMenuBarIcon)
                 // Without the menu bar icon, the Dock is the way back to Glim,
-                // so it stays there (AppPresence applies the same rule).
+                // so it stays there. The switch shows AppPresence's own rule
+                // with the window closed.
                 Toggle("Always show in the Dock", isOn: Binding(
-                    get: { alwaysShowsDockIcon || !showsMenuBarIcon },
+                    get: {
+                        AppPresence.showsDockIcon(isWindowOpen: false, alwaysShowDockIcon: alwaysShowsDockIcon,
+                                                  showsMenuBarIcon: showsMenuBarIcon)
+                    },
                     set: { alwaysShowsDockIcon = $0 }
                 ))
                 .disabled(!showsMenuBarIcon)

@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private let frameAutosaveName: String?
     private let present: @MainActor (NSWindow) -> Void
+    private let isAnotherCopyRunning: @MainActor () -> Bool
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
 
     override convenience init() {
@@ -23,21 +24,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   present: MainWindowController.bringForward)
     }
 
-    /// For tests: a manager on a fake platform, a defaults suite of their own,
-    /// and a window that never comes on screen nor saves its frame.
+    /// Tests pass a manager on a fake platform, a defaults suite of their own,
+    /// a window that never comes on screen nor saves its frame, and a policy
+    /// recorder, so that launching never touches the test process itself.
     init(manager: MonitorManager, defaults: UserDefaults, frameAutosaveName: String? = nil,
-         present: @escaping @MainActor (NSWindow) -> Void) {
+         present: @escaping @MainActor (NSWindow) -> Void,
+         setPolicy: @escaping @MainActor (NSApplication.ActivationPolicy) -> Void = { _ = NSApp.setActivationPolicy($0) },
+         isAnotherCopyRunning: @escaping @MainActor () -> Bool = AppDelegate.anotherCopyIsRunning) {
         self.manager = manager
-        self.presence = AppPresence(defaults: defaults)
+        self.presence = AppPresence(defaults: defaults, setPolicy: setPolicy)
         self.frameAutosaveName = frameAutosaveName
         self.present = present
+        self.isAnotherCopyRunning = isAnotherCopyRunning
         super.init()
+    }
+
+    /// Whether a copy of Glim with this bundle identifier is already running.
+    static func anotherCopyIsRunning() -> Bool {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return false }
+        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).count > 1
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Two copies would talk DDC/CI over each other.
-        if let bundleID = Bundle.main.bundleIdentifier,
-           NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).count > 1 {
+        if isAnotherCopyRunning() {
             NSApp.terminate(nil)
             return
         }

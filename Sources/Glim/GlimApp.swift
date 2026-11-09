@@ -28,17 +28,20 @@ struct GlimApp: App {
 struct GlimCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .saveItem) {
-            Button("Close") {
-                // The window that has a close button: never the menu bar's.
-                if let window = NSApp.keyWindow, window.styleMask.contains(.closable) {
-                    window.performClose(nil)
-                }
-            }
-            .keyboardShortcut("w")
+            Button("Close") { Self.close(NSApp.keyWindow) }
+                .keyboardShortcut("w")
         }
         SidebarCommands()
         CommandGroup(replacing: .help) {
             Button("Glim Help") { NSWorkspace.shared.open(AppInfo.repositoryURL) }
         }
+    }
+
+    /// What ⌘W does: closes `window` if it has a close button, which the menu
+    /// bar's panel doesn't.
+    @MainActor
+    static func close(_ window: NSWindow?) {
+        guard let window, window.styleMask.contains(.closable) else { return }
+        window.performClose(nil)
     }
 }
