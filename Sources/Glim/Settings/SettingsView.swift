@@ -67,6 +67,8 @@ struct GeneralSettingsView: View {
             } footer: {
                 Text("Brightness is always shown. Controls a display doesn't offer are never shown.")
                     .foregroundStyle(.secondary)
+                    // A grouped form aligns wrapped lines to the trailing edge.
+                    .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
