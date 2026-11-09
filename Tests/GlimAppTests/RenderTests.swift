@@ -5,6 +5,25 @@ import GlimTestSupport
 import SwiftUI
 import Testing
 
+/// What the app can find itself showing. Every surface is drawn in each.
+enum Situation: String, CaseIterable, Sendable {
+    /// An HP with its speakers, brightness at 72 and every value read.
+    case hp
+    case confirmInput = "confirm-input"
+    case muted
+    case notResponding = "not-responding"
+    case connecting
+    case untested
+    case twoMonitors = "two-monitors"
+    case empty
+    /// Not started: the first scan has not finished.
+    case looking
+    case unavailable
+    case controlFailed = "control-failed"
+    /// DDC is silent but the USB speakers still answer: their row stays.
+    case speakersWhileSilent = "not-responding-speakers"
+}
+
 /// Renders the app's real views, in every designed state, in an offscreen
 /// window against simulated monitors.
 ///
@@ -19,156 +38,27 @@ import Testing
 /// `ImageRenderer` draws those as placeholders. The window is never key, so
 /// controls render in their inactive colours.
 @Suite(.serialized) @MainActor struct RenderTests {
-    private let hpAudio = AudioDeviceInfo(id: 97, name: "HP E27m G4 USB Audio", isUSB: true)
-
-    private func hp(_ serviceID: UInt64 = 1, pipe: String = "dispext0") -> DiscoveredDisplay {
-        DiscoveredDisplay(serviceID: serviceID, framebuffer: pipe, identity: TestIdentity.hp)
-    }
-
-    private func started(_ platform: FakePlatform) async -> MonitorManager {
-        let manager = MonitorManager(platform: platform)
-        manager.start()
-        #expect(await eventually { !manager.isDiscovering })
-        return manager
-    }
-
-    /// An HP with its speakers, brightness at 72 and every value read.
-    private func readyHP() async throws -> (MonitorManager, Monitor) {
-        let platform = FakePlatform()
-        let simulated = platform.connect(hp())
-        simulated.update { $0.values[0x10]?.current = 72 }
-        platform.addAudio(hpAudio)
-        let manager = await started(platform)
-        let monitor = try #require(manager.monitors.first)
-        let loaded = await eventually {
-            monitor.brightness?.value == 72 && monitor.contrast?.value != nil
-                && monitor.volume?.value != nil && monitor.mute?.value != nil && monitor.input?.current != nil
-        }
-        #expect(loaded)
-        return (manager, monitor)
-    }
-
     // MARK: Menu
 
-    @Test func menuWithTheHP() async throws {
-        let (manager, _) = try await readyHP()
-        try snapshot(MenuContentView(manager: manager), "menu-hp")
-    }
-
-    @Test func menuAskingToConfirmAnInputSwitch() async throws {
-        let (manager, monitor) = try await readyHP()
-        let hdmi = try #require(monitor.input?.options.first { $0.name == "HDMI" })
-        monitor.input?.request(hdmi)
-        try snapshot(MenuContentView(manager: manager), "menu-confirm-input")
-    }
-
-    @Test func menuWithTheSpeakersMuted() async throws {
-        let (manager, monitor) = try await readyHP()
-        monitor.mute?.set(true)
-        #expect(await eventually { monitor.mute?.value == true && monitor.mute?.isWriting == false })
-        try snapshot(MenuContentView(manager: manager), "menu-muted")
-    }
-
-    @Test func menuWithAMonitorThatDoesNotAnswer() async throws {
-        let platform = FakePlatform()
-        platform.connect(hp(), simulated: SimulatedDisplay { $0.silent = true })
-        let manager = await started(platform)
-        #expect(await eventually { manager.monitors.first?.status == .notResponding })
-        try snapshot(MenuContentView(manager: manager), "menu-not-responding")
-    }
-
-    @Test func menuWhileConnecting() async throws {
-        let platform = FakePlatform()
-        let gate = Gate()
-        platform.state.withLock { $0.devices[1] = StuckDevice(gate: gate) }
-        platform.connect(hp())
-        let manager = await started(platform)
-        #expect(manager.monitors.first?.status == .connecting)
-        try snapshot(MenuContentView(manager: manager), "menu-connecting")
-        await gate.open()
-    }
-
-    @Test func menuWithAnUntestedMonitor() async throws {
-        let platform = FakePlatform()
-        let simulated = SimulatedDisplay { state in
-            state.capabilities = Array("(prot(monitor)type(LCD)model(Example 27)cmds(01 02 03 F3)vcp(10 12 60(0F 11 12) 62))".utf8)
-            state.values = [
-                0x10: .init(current: 35, maximum: 100), 0x12: .init(current: 60, maximum: 100),
-                0x60: .init(current: 0x11, maximum: 0), 0x62: .init(current: 20, maximum: 100),
-            ]
-        }
-        platform.connect(DiscoveredDisplay(serviceID: 3, framebuffer: "dispext1",
-                                           identity: DisplayIdentity(vendorID: 0x10AC, productID: 0x4242)), simulated: simulated)
-        let manager = await started(platform)
-        let monitor = try #require(manager.monitors.first)
-        #expect(await eventually { monitor.volume?.value != nil && monitor.input?.current != nil })
-        try snapshot(MenuContentView(manager: manager), "menu-untested")
-    }
-
-    @Test func menuWithTwoMonitors() async throws {
-        let platform = FakePlatform()
-        platform.connect(hp())
-        let second = DisplayIdentity(vendorID: 0x220E, productID: 0x3753, alphanumericSerial: "TEST0000002", productName: "HP E27m G4")
-        platform.connect(DiscoveredDisplay(serviceID: 2, framebuffer: "dispext1", identity: second))
-        let manager = await started(platform)
-        #expect(await eventually { manager.monitors.count == 2 && manager.monitors.allSatisfy { $0.input?.current != nil } })
-        try snapshot(MenuContentView(manager: manager), "menu-two-monitors")
-    }
-
-    @Test func menuWithNoMonitor() async throws {
-        let manager = await started(FakePlatform())
-        try snapshot(MenuContentView(manager: manager), "menu-empty")
-    }
-
-    @Test func menuWhileLooking() throws {
-        // Not started: the first scan has not finished.
-        try snapshot(MenuContentView(manager: MonitorManager(platform: FakePlatform())), "menu-looking")
-    }
-
-    @Test func menuWhenDDCIsUnavailable() throws {
-        let platform = FakePlatform()
-        platform.state.withLock { $0.available = false }
-        let manager = MonitorManager(platform: platform)
-        manager.start()
-        try snapshot(MenuContentView(manager: manager), "menu-unavailable")
-    }
-
-    @Test func menuWithAControlThatFailed() async throws {
-        let platform = FakePlatform()
-        let simulated = platform.connect(hp())
-        platform.addAudio(hpAudio)
-        let manager = await started(platform)
-        let monitor = try #require(manager.monitors.first)
-        #expect(await eventually { monitor.brightness?.value != nil && monitor.input?.current != nil })
-        simulated.update { $0.failNextWrites = 2 }
-        monitor.brightness?.set(40)
-        #expect(await eventually { monitor.brightness?.failure != nil && monitor.brightness?.isWriting == false })
-        try snapshot(MenuContentView(manager: manager), "menu-control-failed")
-    }
-
-    /// DDC is silent but the USB speakers still answer: their row stays.
-    @Test func menuWithSpeakersWhileDDCIsSilent() async throws {
-        let platform = FakePlatform()
-        platform.connect(hp(), simulated: SimulatedDisplay { $0.silent = true })
-        platform.addAudio(hpAudio)
-        let manager = await started(platform)
-        let monitor = try #require(manager.monitors.first)
-        #expect(await eventually { monitor.status == .notResponding && monitor.volume?.value != nil })
-        try snapshot(MenuContentView(manager: manager), "menu-not-responding-speakers")
+    @Test(arguments: Situation.allCases)
+    func menu(in situation: Situation) async throws {
+        let setup = try await Setup.make(situation)
+        try snapshot(MenuContentView(manager: setup.manager), "menu-\(situation.rawValue)")
+        await setup.finish()
     }
 
     // MARK: Settings
 
     @Test func settingsPanes() async throws {
-        let (manager, _) = try await readyHP()
-        try snapshot(SettingsView(manager: manager), "settings-general", width: 460)
-        try snapshot(DisplaysPaneHarness(manager: manager), "settings-displays", width: 460)
+        let (setup, _, _) = try await Setup.readyHP()
+        try snapshot(SettingsView(manager: setup.manager), "settings-general", width: 460)
+        try snapshot(DisplaysPaneHarness(manager: setup.manager), "settings-displays", width: 460)
         try snapshot(AboutPaneHarness(), "settings-about", width: 460)
     }
 
     @Test func diagnosticsLeaveOutTheSerial() async throws {
-        let (manager, _) = try await readyHP()
-        let report = manager.diagnosticsReport(appVersion: "test")
+        let setup = try await Setup.make(.hp)
+        let report = setup.manager.diagnosticsReport(appVersion: "test")
         #expect(report.contains("HP E27m G4"))
         #expect(report.contains("profile: hp-e27m-g4 (tested; untested: input)"))
         #expect(report.contains("serial present"))
@@ -189,6 +79,150 @@ import Testing
     }
 }
 
+/// A manager in one ``Situation``, against simulated monitors.
+@MainActor
+struct Setup {
+    let manager: MonitorManager
+    let platform: FakePlatform
+    private var cleanup: (@MainActor () async -> Void)?
+
+    static let hpAudio = AudioDeviceInfo(id: 97, name: "HP E27m G4 USB Audio", isUSB: true)
+
+    static func hp(_ serviceID: UInt64 = 1, pipe: String = "dispext0") -> DiscoveredDisplay {
+        DiscoveredDisplay(serviceID: serviceID, framebuffer: pipe, identity: TestIdentity.hp)
+    }
+
+    /// Releases whatever the situation holds open.
+    func finish() async {
+        await cleanup?()
+    }
+
+    static func started(_ platform: FakePlatform) async -> MonitorManager {
+        let manager = MonitorManager(platform: platform)
+        manager.start()
+        #expect(await eventually { !manager.isDiscovering })
+        return manager
+    }
+
+    /// The HP, ready: speakers attached, brightness at 72 and every value read.
+    static func readyHP() async throws -> (Setup, Monitor, SimulatedDisplay) {
+        let platform = FakePlatform()
+        let simulated = platform.connect(hp())
+        simulated.update { $0.values[0x10]?.current = 72 }
+        platform.addAudio(hpAudio)
+        let manager = await started(platform)
+        let monitor = try #require(manager.monitors.first)
+        let loaded = await eventually {
+            monitor.brightness?.value == 72 && monitor.contrast?.value != nil
+                && monitor.volume?.value != nil && monitor.mute?.value != nil && monitor.input?.current != nil
+        }
+        #expect(loaded)
+        return (Setup(manager: manager, platform: platform), monitor, simulated)
+    }
+
+    static func make(_ situation: Situation) async throws -> Setup {
+        switch situation {
+        case .hp:
+            return try await readyHP().0
+
+        case .confirmInput:
+            let (setup, monitor, _) = try await readyHP()
+            let hdmi = try #require(monitor.input?.options.first { $0.name == "HDMI" })
+            monitor.input?.request(hdmi)
+            return setup
+
+        case .muted:
+            let (setup, monitor, _) = try await readyHP()
+            monitor.mute?.set(true)
+            #expect(await eventually { monitor.mute?.value == true && monitor.mute?.isWriting == false })
+            return setup
+
+        case .notResponding:
+            let platform = FakePlatform()
+            platform.connect(hp(), simulated: SimulatedDisplay { $0.silent = true })
+            let manager = await started(platform)
+            #expect(await eventually { manager.monitors.first?.status == .notResponding })
+            return Setup(manager: manager, platform: platform)
+
+        case .connecting:
+            let platform = FakePlatform()
+            let gate = Gate()
+            platform.state.withLock { $0.devices[1] = StuckDevice(gate: gate) }
+            platform.connect(hp())
+            let manager = await started(platform)
+            #expect(manager.monitors.first?.status == .connecting)
+            return Setup(manager: manager, platform: platform, cleanup: { await gate.open() })
+
+        case .untested:
+            let platform = FakePlatform()
+            let simulated = SimulatedDisplay { state in
+                state.capabilities = Array("(prot(monitor)type(LCD)model(Example 27)cmds(01 02 03 F3)vcp(10 12 60(0F 11 12) 62))".utf8)
+                state.values = [
+                    0x10: .init(current: 35, maximum: 100), 0x12: .init(current: 60, maximum: 100),
+                    0x60: .init(current: 0x11, maximum: 0), 0x62: .init(current: 20, maximum: 100),
+                ]
+            }
+            platform.connect(DiscoveredDisplay(serviceID: 3, framebuffer: "dispext1",
+                                               identity: DisplayIdentity(vendorID: 0x10AC, productID: 0x4242)), simulated: simulated)
+            let manager = await started(platform)
+            let monitor = try #require(manager.monitors.first)
+            #expect(await eventually { monitor.volume?.value != nil && monitor.input?.current != nil })
+            return Setup(manager: manager, platform: platform)
+
+        case .twoMonitors:
+            let platform = FakePlatform()
+            platform.connect(hp())
+            let second = DisplayIdentity(vendorID: 0x220E, productID: 0x3753, alphanumericSerial: "TEST0000002", productName: "HP E27m G4")
+            platform.connect(DiscoveredDisplay(serviceID: 2, framebuffer: "dispext1", identity: second))
+            let manager = await started(platform)
+            #expect(await eventually { manager.monitors.count == 2 && manager.monitors.allSatisfy { $0.input?.current != nil } })
+            return Setup(manager: manager, platform: platform)
+
+        case .empty:
+            let platform = FakePlatform()
+            return Setup(manager: await started(platform), platform: platform)
+
+        case .looking:
+            let platform = FakePlatform()
+            return Setup(manager: MonitorManager(platform: platform), platform: platform)
+
+        case .unavailable:
+            let platform = FakePlatform()
+            platform.state.withLock { $0.available = false }
+            let manager = MonitorManager(platform: platform)
+            manager.start()
+            return Setup(manager: manager, platform: platform)
+
+        case .controlFailed:
+            let platform = FakePlatform()
+            let simulated = platform.connect(hp())
+            platform.addAudio(hpAudio)
+            let manager = await started(platform)
+            let monitor = try #require(manager.monitors.first)
+            #expect(await eventually { monitor.brightness?.value != nil && monitor.input?.current != nil })
+            simulated.update { $0.failNextWrites = 2 }
+            monitor.brightness?.set(40)
+            #expect(await eventually { monitor.brightness?.failure != nil && monitor.brightness?.isWriting == false })
+            return Setup(manager: manager, platform: platform)
+
+        case .speakersWhileSilent:
+            let platform = FakePlatform()
+            platform.connect(hp(), simulated: SimulatedDisplay { $0.silent = true })
+            platform.addAudio(hpAudio)
+            let manager = await started(platform)
+            let monitor = try #require(manager.monitors.first)
+            #expect(await eventually { monitor.status == .notResponding && monitor.volume?.value != nil })
+            return Setup(manager: manager, platform: platform)
+        }
+    }
+
+    private init(manager: MonitorManager, platform: FakePlatform, cleanup: (@MainActor () async -> Void)? = nil) {
+        self.manager = manager
+        self.platform = platform
+        self.cleanup = cleanup
+    }
+}
+
 /// TabView only builds its selected tab, so the other panes are rendered on
 /// their own.
 private struct DisplaysPaneHarness: View {
@@ -206,7 +240,8 @@ private struct AboutPaneHarness: View {
 
 @MainActor
 enum OffscreenRenderer {
-    static func render(_ view: some View, width: CGFloat, dark: Bool) -> NSBitmapImageRep? {
+    /// Puts `view` in a borderless window far off screen, and draws it.
+    static func host(_ view: some View, width: CGFloat, dark: Bool) -> NSWindow {
         let app = NSApplication.shared
         app.setActivationPolicy(.prohibited)
         let hosting = NSHostingView(rootView: view
@@ -220,15 +255,30 @@ enum OffscreenRenderer {
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         window.contentView = hosting
         window.orderFrontRegardless()
+        // Let SwiftUI lay out and AppKit draw its controls.
+        spin(0.15)
+        hosting.layoutSubtreeIfNeeded()
+        return window
+    }
+
+    static func render(_ view: some View, width: CGFloat, dark: Bool) -> NSBitmapImageRep? {
+        let window = host(view, width: width, dark: dark)
         defer {
             window.orderOut(nil)
             window.close()
         }
-        // Let SwiftUI lay out and AppKit draw its controls.
-        RunLoop.current.run(until: Date().addingTimeInterval(0.15))
-        hosting.layoutSubtreeIfNeeded()
-        guard let image = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { return nil }
-        hosting.cacheDisplay(in: hosting.bounds, to: image)
+        guard let hosting = window.contentView else { return nil }
+        return draw(hosting)
+    }
+
+    /// Runs the main run loop, so SwiftUI can update and AppKit can draw.
+    static func spin(_ seconds: TimeInterval) {
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    private static func draw(_ view: NSView) -> NSBitmapImageRep? {
+        guard let image = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: image)
         return image
     }
 
