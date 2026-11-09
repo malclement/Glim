@@ -22,6 +22,15 @@ enum Situation: String, CaseIterable, Sendable {
     case controlFailed = "control-failed"
     /// DDC is silent but the USB speakers still answer: their row stays.
     case speakersWhileSilent = "not-responding-speakers"
+    /// A monitor without a profile, still reading its capabilities: no
+    /// controls yet.
+    case readingCapabilities = "reading-capabilities"
+    /// A monitor that answers, but offers nothing Glim supports.
+    case noSupportedControls = "no-supported-controls"
+    /// A display whose EDID was never matched: no name and no EDID row.
+    case unidentified
+    /// Mute and input writes refused at the bus: their warnings.
+    case writesFailed = "writes-failed"
 }
 
 /// Renders the app's real views, in every designed state, in an offscreen
@@ -58,8 +67,8 @@ enum Situation: String, CaseIterable, Sendable {
         await setup.finish()
     }
 
-    /// With two monitors, the second one selected.
-    @Test func windowWithTheSecondMonitorSelected() async throws {
+    /// The second of two monitors' detail, drawn on its own.
+    @Test func detailOfTheSecondMonitor() async throws {
         let setup = try await Setup.make(.twoMonitors)
         let second = try #require(setup.manager.monitors.last)
         let view = MonitorDetailView(manager: setup.manager, monitor: second)
@@ -245,6 +254,67 @@ struct Setup {
             let monitor = try #require(manager.monitors.first)
             #expect(await eventually { monitor.status == .notResponding && monitor.volume?.value != nil })
             return Setup(manager: manager, platform: platform)
+
+        case .readingCapabilities:
+            let platform = FakePlatform()
+            let gate = Gate()
+            platform.state.withLock { $0.devices[4] = StuckDevice(gate: gate) }
+            platform.connect(DiscoveredDisplay(serviceID: 4, framebuffer: "dispext1",
+                                               identity: DisplayIdentity(vendorID: 0x10AC, productID: 0x4242)))
+            let manager = await started(platform)
+            let monitor = try #require(manager.monitors.first)
+            #expect(monitor.status == .connecting && !monitor.hasControls)
+            return Setup(manager: manager, platform: platform, cleanup: { await gate.open() })
+
+        case .noSupportedControls:
+            let platform = FakePlatform()
+            // Brightness and contrast are always tried; this one answers
+            // "unsupported" to both, so both go.
+            let simulated = SimulatedDisplay { state in
+                state.capabilities = Array("(prot(monitor)type(LCD)model(Plain 24)cmds(01 02 03 F3)vcp(14 16))".utf8)
+            }
+            platform.connect(DiscoveredDisplay(serviceID: 5, framebuffer: "dispext1",
+                                               identity: DisplayIdentity(vendorID: 0x10AC, productID: 0x2424)), simulated: simulated)
+            let manager = await started(platform)
+            let monitor = try #require(manager.monitors.first)
+            #expect(await eventually { monitor.status == .ready && !monitor.hasControls })
+            return Setup(manager: manager, platform: platform)
+
+        case .unidentified:
+            let platform = FakePlatform()
+            platform.connect(DiscoveredDisplay(serviceID: 6, framebuffer: "dispext1", identity: nil))
+            let manager = await started(platform)
+            let monitor = try #require(manager.monitors.first)
+            #expect(await eventually { monitor.brightness?.value != nil && monitor.contrast?.value != nil })
+            #expect(monitor.identity == nil && monitor.name == "External Display")
+            return Setup(manager: manager, platform: platform)
+
+        case .writesFailed:
+            let platform = FakePlatform()
+            let simulated = SimulatedDisplay { state in
+                state.capabilities = Array("(prot(monitor)type(LCD)model(Example 27)cmds(01 02 03 F3)vcp(10 12 60(0F 11) 62 8D))".utf8)
+                state.values = [
+                    0x10: .init(current: 50, maximum: 100), 0x12: .init(current: 50, maximum: 100),
+                    0x60: .init(current: 0x0F, maximum: 0), 0x62: .init(current: 30, maximum: 100),
+                    0x8D: .init(current: 2, maximum: 2),
+                ]
+            }
+            platform.connect(DiscoveredDisplay(serviceID: 7, framebuffer: "dispext1",
+                                               identity: DisplayIdentity(vendorID: 0x10AC, productID: 0x4243)), simulated: simulated)
+            let manager = await started(platform)
+            let monitor = try #require(manager.monitors.first)
+            #expect(await eventually { monitor.mute?.value != nil && monitor.input?.current != nil })
+            // A simulated display: the bus refuses both writes, nothing real.
+            simulated.update { $0.failNextWrites = 6 }
+            monitor.mute?.set(true)
+            let other = try #require(monitor.input?.options.first { $0.value == 0x11 })
+            monitor.input?.request(other)
+            monitor.input?.confirm()
+            #expect(await eventually {
+                monitor.mute?.failure != nil && monitor.input?.failure != nil
+                    && monitor.mute?.isWriting == false && monitor.input?.isWriting == false
+            })
+            return Setup(manager: manager, platform: platform)
         }
     }
 
@@ -259,7 +329,8 @@ struct Setup {
 /// never reads or writes the test runner's own defaults.
 final class TestDefaults {
     let store: UserDefaults
-    private let name: String
+    /// The suite's name, to reach the same defaults from another thread.
+    let name: String
 
     init(_ name: String) throws {
         self.name = "io.github.malclement.Glim.tests.\(name)"
@@ -328,6 +399,19 @@ enum OffscreenRenderer {
     /// Runs the main run loop, so SwiftUI can update and AppKit can draw.
     static func spin(_ seconds: TimeInterval) {
         RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    /// Runs the main run loop until `condition` holds, for at most `timeout`.
+    /// The budget is generous on purpose: it is there to fail a hung test on a
+    /// slow runner, not to time a fast one.
+    @discardableResult
+    static func spin(until condition: () -> Bool, timeout: TimeInterval = 30) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() >= deadline { return false }
+            spin(0.02)
+        }
+        return true
     }
 
     private static func draw(_ view: NSView) -> NSBitmapImageRep? {

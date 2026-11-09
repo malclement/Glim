@@ -69,6 +69,22 @@ private let everyCombination: [(Bool, Bool, Bool)] = [false, true].flatMap { ope
         #expect(await eventually { recorder.policies == [.accessory, .regular, .accessory] })
     }
 
+    /// A change can arrive on any thread, as a `defaults write` may: the
+    /// presence must hop to the main actor rather than assume it is there.
+    @Test func aChangeMadeOnAnotherThreadIsApplied() async throws {
+        let defaults = try TestDefaults("presence-thread")
+        let recorder = Recorder()
+        let presence = AppPresence(defaults: defaults.store, setPolicy: recorder.set)
+        presence.start()
+        let suite = defaults.name
+        let wroteOffMain = await Task.detached {
+            UserDefaults(suiteName: suite)?.set(true, forKey: Preferences.alwaysShowDockIcon)
+            return pthread_main_np() == 0
+        }.value
+        #expect(wroteOffMain)
+        #expect(await eventually { recorder.policies == [.accessory, .regular] })
+    }
+
     @Test func withoutTheMenuBarIconGlimStaysInTheDock() async throws {
         let defaults = try TestDefaults("presence-menu-bar")
         let recorder = Recorder()
