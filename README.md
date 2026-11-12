@@ -1,5 +1,10 @@
 # Glim
 
+[![CI](https://github.com/malclement/Glim/actions/workflows/ci.yml/badge.svg)](https://github.com/malclement/Glim/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/malclement/Glim)](https://github.com/malclement/Glim/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+![macOS 14+ on Apple silicon](https://img.shields.io/badge/macOS-14%2B%20%C2%B7%20Apple%20silicon-lightgrey)
+
 Brightness, contrast, color, volume and input for your external display, from the Mac menu bar or Glim's own window.
 
 ![Glim's menu, in light and dark mode](docs/images/menu.png)
@@ -75,8 +80,8 @@ The Xcode Command Line Tools are enough. [docs/development.md](docs/development.
 
 ## Contributing
 
-Bug reports, tests on other monitors and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+Bug reports, tests on other monitors and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Taking part means following the [code of conduct](CODE_OF_CONDUCT.md). Report security problems privately, as [SECURITY.md](SECURITY.md) describes.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Glim sends commands to your monitor's hardware and is provided as is, without warranty. Glim is not affiliated with or endorsed by HP Inc.; HP and other product names are trademarks of their owners, used here only to say which hardware was tested.

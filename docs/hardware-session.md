@@ -19,7 +19,7 @@ Physical fallbacks to have in reach, and to find in the OSD before step B1:
 | settings are in a state nobody understands | OSD › **Management › Factory Reset** (last resort: it wipes OSD-only settings) |
 
 ```sh
-cd ~/Documents/private-repositories/Glim
+cd Glim                          # the repository's root
 make glim probes
 osascript -e 'tell application id "io.github.malclement.Glim" to quit'
 ps axo comm | grep -i -E 'glim\.app|monitorcontrol|betterdisplay|lunar|m1ddc'   # must print nothing
