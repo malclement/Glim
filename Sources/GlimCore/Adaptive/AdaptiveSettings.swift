@@ -58,15 +58,16 @@ public struct DaySchedule: Codable, Hashable, Sendable {
 
     public enum Period: Sendable, Equatable { case day, night }
 
-    public func period(at date: Date, calendar: Calendar = .current) -> Period {
+    public func period(at date: Date, calendar: Calendar = .autoupdatingCurrent) -> Period {
         let minute = Self.minuteOfDay(date, calendar: calendar)
         return isDay(minute) ? .day : .night
     }
 
     /// How far into the day, 0 (night) to 1 (day), ramping over the half hour
     /// that follows each change.
-    public func dayness(at date: Date, calendar: Calendar = .current) -> Double {
+    public func dayness(at date: Date, calendar: Calendar = .autoupdatingCurrent) -> Double {
         let minute = Self.minuteOfDay(date, calendar: calendar)
+        if dayStarts == nightStarts { return 1 }
         let sinceDay = Self.minutes(from: dayStarts, to: minute)
         let sinceNight = Self.minutes(from: nightStarts, to: minute)
         if isDay(minute) {
@@ -75,14 +76,25 @@ public struct DaySchedule: Codable, Hashable, Sendable {
         return max(1 - sinceNight / Self.rampMinutes, 0)
     }
 
-    public func brightness(at date: Date, calendar: Calendar = .current) -> Double {
+    public func brightness(at date: Date, calendar: Calendar = .autoupdatingCurrent) -> Double {
         let dayness = dayness(at: date, calendar: calendar)
         return nightBrightness + (dayBrightness - nightBrightness) * dayness
     }
 
+    /// The moment `minutes` after midnight on `date`'s day, by the wall
+    /// clock. Unlike midnight plus `minutes * 60` seconds, it is right on a
+    /// day when the clocks change.
+    public static func date(atMinute minutes: Int, on date: Date, calendar: Calendar = .autoupdatingCurrent) -> Date {
+        let clamped = min(max(minutes, 0), 24 * 60 - 1)
+        return calendar.date(bySettingHour: clamped / 60, minute: clamped % 60, second: 0, of: date)
+            ?? calendar.startOfDay(for: date).addingTimeInterval(Double(clamped) * 60)
+    }
+
     private func isDay(_ minute: Double) -> Bool {
+        // Equal times leave no night: always day.
+        if dayStarts == nightStarts { return true }
         // Day is the stretch from dayStarts forward to nightStarts.
-        Self.minutes(from: dayStarts, to: minute) < Self.minutes(from: dayStarts, to: Double(nightStarts))
+        return Self.minutes(from: dayStarts, to: minute) < Self.minutes(from: dayStarts, to: Double(nightStarts))
     }
 
     private static func minuteOfDay(_ date: Date, calendar: Calendar) -> Double {
