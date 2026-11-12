@@ -61,6 +61,17 @@ public struct ControlFailure: Equatable, Sendable {
     }
 }
 
+/// Where a change to a control comes from.
+public enum ChangeOrigin: Sendable, Equatable {
+    /// Someone moved a slider, picked a value or grabbed a handle.
+    case user
+    /// Applying a saved scene: the user's doing, but not a statement about
+    /// what the light calls for, so it is not learned from.
+    case scene
+    /// Glim itself (automatic brightness, evening warmth).
+    case automatic
+}
+
 /// One control of a monitor (a slider, a toggle, a choice) and its
 /// conversation with the device.
 ///
@@ -95,6 +106,9 @@ public final class DeviceControl<Value: Sendable & Equatable> {
     /// opposed to automatic adjustment. Automatic brightness watches it to
     /// know that someone took over.
     @ObservationIgnored public private(set) var userChanges = 0
+    /// How many of ``userChanges`` came from a scene (``ChangeOrigin/scene``).
+    /// A scene is a takeover, but automatic brightness doesn't learn from it.
+    @ObservationIgnored public private(set) var sceneChanges = 0
 
     @ObservationIgnored private let backend: ControlBackend<Value>
     @ObservationIgnored private let timing: ControlTiming
@@ -134,12 +148,14 @@ public final class DeviceControl<Value: Sendable & Equatable> {
     /// free. Ignored until the device has been read once, because until then
     /// its range, and whether it answers at all, is unknown.
     ///
-    /// - Parameter automatic: true for a change Glim makes on its own
-    ///   (automatic brightness), which doesn't count in ``userChanges``.
-    public func set(_ newValue: Value, automatic: Bool = false) {
+    /// - Parameter origin: ``ChangeOrigin/automatic`` for a change Glim makes
+    ///   on its own, which doesn't count in ``userChanges``; a scene counts in
+    ///   both ``userChanges`` and ``sceneChanges``.
+    public func set(_ newValue: Value, origin: ChangeOrigin = .user) {
         guard !invalidated, value != nil else { return }
         let target = quantize(newValue, range)
-        if !automatic { userChanges &+= 1 }
+        if origin != .automatic { userChanges &+= 1 }
+        if origin == .scene { sceneChanges &+= 1 }
         guard target != value || writer != nil else { return }
         value = target
         generation &+= 1
@@ -149,6 +165,10 @@ public final class DeviceControl<Value: Sendable & Equatable> {
         if writer == nil {
             writer = Task { [weak self] in await self?.drainWrites() }
         }
+    }
+
+    public func set(_ newValue: Value, automatic: Bool) {
+        set(newValue, origin: automatic ? .automatic : .user)
     }
 
     /// Call when a drag starts and ends. Reads are held off during a drag.

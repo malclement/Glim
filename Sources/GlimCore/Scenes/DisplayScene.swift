@@ -173,7 +173,7 @@ extension Monitor {
         var applied = false
         func set(_ control: DeviceControl<Double>?, _ level: DisplayScene.Level?) {
             guard let control, control.value != nil, let level else { return }
-            control.set(level.value)
+            control.set(level.value, origin: .scene)
             applied = true
         }
         if parts.contains(.brightness) { set(brightness, settings.brightness) }
@@ -183,7 +183,7 @@ extension Monitor {
             case .preset(let value, _):
                 if let selector = colorPreset, selector.value != nil,
                    let option = selector.options.first(where: { $0.value == value }) {
-                    selector.select(option)
+                    selector.select(option, origin: .scene)
                     applied = true
                 }
             case .temperature(let steps, _):
