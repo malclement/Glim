@@ -5,17 +5,38 @@ extension Monitor {
     public var displayPipe: String? { display.framebuffer }
 }
 
+/// What the app knows about itself that GlimCore cannot, for the report.
+public struct DiagnosticsContext: Sendable {
+    /// Whether macOS started Glim as a login item. nil when unknown.
+    public var launchedAtLogin: Bool?
+    /// The login item's status in words, for example "enabled".
+    public var loginItemStatus: String?
+
+    public init(launchedAtLogin: Bool? = nil, loginItemStatus: String? = nil) {
+        self.launchedAtLogin = launchedAtLogin
+        self.loginItemStatus = loginItemStatus
+    }
+}
+
 extension MonitorManager {
-    /// A plain-text report for bug reports: what Glim found and what each
-    /// control reads. Serial numbers are left out.
-    public func diagnosticsReport(appVersion: String) -> String {
+    /// A plain-text report for bug reports: what Glim found, why DDC/CI is or
+    /// isn't available, what each control reads, and the last events. Serial
+    /// numbers, display UUIDs and audio device UIDs are left out.
+    public func diagnosticsReport(appVersion: String, context: DiagnosticsContext = DiagnosticsContext(),
+                                  now: Date = Date()) -> String {
+        func yesNo(_ value: Bool?) -> String { value.map { $0 ? "yes" : "no" } ?? "unknown" }
         var lines = [
             "Glim \(appVersion)",
             "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)",
             "Hardware \(Self.hardwareModel())",
             "DDC/CI \(availability == .available ? "available" : "unavailable")",
-            "Monitors \(monitors.count)",
+            "Launched at login: \(yesNo(context.launchedAtLogin))",
+            "Login item: \(context.loginItemStatus ?? "unknown")",
         ]
+        if case .unavailable(let reason) = availability { lines.append("DDC/CI unavailable because: \(reason)") }
+        if let discoveryHint { lines.append("Discovery: \(discoveryHint)") }
+        lines.append(contentsOf: platform.transportSummary.lines)
+        lines.append("Monitors \(monitors.count)")
         for monitor in monitors {
             lines.append("")
             lines.append("\(monitor.name)")
@@ -38,10 +59,20 @@ extension MonitorManager {
             lines.append("  volume: \(Self.describe(monitor.volume))\(monitor.audioDeviceName.map { " via \($0)" } ?? "")")
             lines.append("  mute: \(Self.describe(monitor.mute))")
             lines.append("  input: \(Self.describe(monitor.input?.control))\(monitor.input?.currentName.map { " (\($0))" } ?? "")")
+            if let presets = monitor.colorPreset?.options, !presets.isEmpty {
+                lines.append("  color presets offered: " + presets.map { "\($0.name) (0x\(String($0.value, radix: 16)))" }.joined(separator: ", "))
+            }
+            if let inputs = monitor.input?.options, !inputs.isEmpty {
+                lines.append("  inputs offered: " + inputs.map { "\($0.name) (0x\(String($0.value, radix: 16)))" }.joined(separator: ", "))
+            }
             if let caps = monitor.capabilitiesString {
                 lines.append("  capabilities: \(caps)")
             }
         }
+        lines.append("")
+        lines.append("Recent events (newest last)")
+        let recent = events.lines(now: now)
+        lines.append(contentsOf: recent.isEmpty ? ["  none"] : recent.map { "  " + $0 })
         return lines.joined(separator: "\n")
     }
 
@@ -49,7 +80,9 @@ extension MonitorManager {
         guard let control else { return "not offered" }
         var text = control.value.map { "\($0)" } ?? "unknown"
         if let range = control.range { text += " of \(range.lowerBound)…\(range.upperBound)" }
-        if let failure = control.failure { text += " [\(failure.message)]" }
+        if let failure = control.failure {
+            text += " [\(failure.message)\(failure.detail.map { " (\($0))" } ?? "")]"
+        }
         return text
     }
 

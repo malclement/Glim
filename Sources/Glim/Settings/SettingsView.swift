@@ -17,7 +17,7 @@ struct SettingsView: View {
 }
 
 struct GeneralSettingsView: View {
-    @State private var login = LaunchAtLogin()
+    @State private var login: LaunchAtLogin
     @AppStorage(Preferences.showMenuBarIcon) private var showsMenuBarIcon = true
     @AppStorage(Preferences.alwaysShowDockIcon) private var alwaysShowsDockIcon = false
     @AppStorage(Preferences.showContrast) private var showContrast = true
@@ -25,6 +25,10 @@ struct GeneralSettingsView: View {
     @AppStorage(Preferences.showVolume) private var showVolume = true
     @AppStorage(Preferences.showInput) private var showInput = true
     @AppStorage(Preferences.showScenes) private var showScenes = true
+
+    init(login: LaunchAtLogin = LaunchAtLogin()) {
+        _login = State(initialValue: login)
+    }
 
     var body: some View {
         Form {
@@ -42,6 +46,13 @@ struct GeneralSettingsView: View {
                     Text(error)
                         .foregroundStyle(.red)
                         .font(.callout)
+                }
+            } footer: {
+                if let note = Self.loginNote(notFound: login.isNotFound, outsideApplications: login.runsOutsideApplications) {
+                    Text(note)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             Section {
@@ -81,8 +92,35 @@ struct GeneralSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(height: 440)
+        .frame(height: paneHeight)
         .onAppear { login.refresh() }
+        // A change made in System Settings › Login Items shows up when the
+        // user comes back to Glim.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            login.refresh()
+        }
+    }
+
+    /// The pane grows by what the login section adds, so its last rows are
+    /// not pushed out of the fixed-size window.
+    private var paneHeight: CGFloat {
+        var height: CGFloat = 440
+        if Self.loginNote(notFound: login.isNotFound, outsideApplications: login.runsOutsideApplications) != nil { height += 100 }
+        if login.requiresApproval { height += 40 }
+        if login.errorMessage != nil { height += 40 }
+        return height
+    }
+
+    /// What to say under the login toggle, if anything.
+    static func loginNote(notFound: Bool, outsideApplications: Bool) -> String? {
+        var notes: [String] = []
+        if notFound {
+            notes.append("macOS can't find Glim as a login item. That usually means it is running from a disk image or from outside the Applications folder.")
+        }
+        if outsideApplications {
+            notes.append("Opening at login works reliably only once Glim is in the Applications folder.")
+        }
+        return notes.isEmpty ? nil : notes.joined(separator: " ")
     }
 }
 

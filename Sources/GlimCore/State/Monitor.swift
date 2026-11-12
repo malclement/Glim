@@ -44,6 +44,7 @@ public final class Monitor: Identifiable {
     @ObservationIgnored private(set) var display: DiscoveredDisplay
     @ObservationIgnored private var device: any DDCDevice
     @ObservationIgnored private let timing: ControlTiming
+    @ObservationIgnored private let events: EventLog
     @ObservationIgnored private var configuration: Task<Void, Never>?
     @ObservationIgnored private var lastRefresh: ContinuousClock.Instant?
     @ObservationIgnored private var audioDeviceID: AudioObjectID?
@@ -64,8 +65,9 @@ public final class Monitor: Identifiable {
     /// DDC controls) rather than to a USB Audio device (attached separately).
     @ObservationIgnored private var volumeIsDDC = false
 
-    init(id: String, display: DiscoveredDisplay, device: any DDCDevice, timing: ControlTiming) {
+    init(id: String, display: DiscoveredDisplay, device: any DDCDevice, timing: ControlTiming, events: EventLog = EventLog()) {
         self.id = id
+        self.events = events
         self.display = display
         self.device = device
         self.timing = timing
@@ -87,7 +89,7 @@ public final class Monitor: Identifiable {
     /// stays on screen, and rebuilt on the new channel. USB speakers are a
     /// separate device and stay.
     func reconnect(to display: DiscoveredDisplay, device: any DDCDevice) {
-        Log.state.info("\(self.name, privacy: .public) reconnected")
+        Log.state.notice("\(self.name, privacy: .public) reconnected")
         removeDDCControls()
         self.display = display
         self.device = device
@@ -194,6 +196,7 @@ public final class Monitor: Identifiable {
             return (value, false)
         } catch {
             Log.state.notice("\(self.name, privacy: .public): no color temperature increment: \(String(describing: error), privacy: .public)")
+            events.record("state", "\(name): color temperature increment unread: \((error as? DDCError)?.technicalDetail ?? String(describing: error))")
             return (nil, (error as? DDCError)?.isTransient ?? true)
         }
     }
@@ -206,7 +209,8 @@ public final class Monitor: Identifiable {
             capabilitiesString = raw
             return MonitorCapabilities(parsing: raw)
         } catch {
-            Log.state.error("\(self.name, privacy: .public): no capabilities string: \(String(describing: error), privacy: .public)")
+            Log.state.notice("\(self.name, privacy: .public): no capabilities string: \(String(describing: error), privacy: .public)")
+            events.record("state", "\(name): no capabilities string (attempt \(capabilityAttempts)): \((error as? DDCError)?.technicalDetail ?? String(describing: error))")
             return nil
         }
     }
@@ -216,19 +220,19 @@ public final class Monitor: Identifiable {
         // behind the controls on screen.
         removeDDCControls()
         let device = self.device
-        brightness = profile.brightness ? makeControl(.vcpLevel(.brightness, on: device), quantize: quantizeToSteps) : nil
-        contrast = profile.contrast ? makeControl(.vcpLevel(.contrast, on: device), quantize: quantizeToSteps) : nil
+        brightness = profile.brightness ? makeControl(.vcpLevel(.brightness, on: device), label: "brightness", quantize: quantizeToSteps) : nil
+        contrast = profile.contrast ? makeControl(.vcpLevel(.contrast, on: device), label: "contrast", quantize: quantizeToSteps) : nil
         buildColorControls()
         if profile.volume == .ddc {
-            volume = makeControl(.vcpLevel(.audioVolume, on: device), quantize: quantizeToSteps)
-            mute = capabilities?.lists(.audioMute) == true ? makeControl(.vcpMute(on: device)) : nil
+            volume = makeControl(.vcpLevel(.audioVolume, on: device), label: "volume", quantize: quantizeToSteps)
+            mute = capabilities?.lists(.audioMute) == true ? makeControl(.vcpMute(on: device), label: "mute") : nil
             volumeIsDDC = true
         }
         input = profile.inputs.map { options in
             // A switch takes a moment, and the monitor may stop answering
             // during it, so its read-back waits longer.
             let timing = ControlTiming(settleDelay: .seconds(2), operationTimeout: self.timing.operationTimeout)
-            return InputSelector(options: options, control: makeControl(.vcpChoice(.inputSource, on: device), timing: timing))
+            return InputSelector(options: options, control: makeControl(.vcpChoice(.inputSource, on: device), label: "input", timing: timing))
         }
     }
 
@@ -238,13 +242,14 @@ public final class Monitor: Identifiable {
     private func buildColorControls() {
         let device = self.device
         let temperature = profile.colorTemperature.map { scale in
-            makeControl(.colorTemperature(on: device, scale: scale), quantize: quantizeToSteps)
+            makeControl(.colorTemperature(on: device, scale: scale), label: "color temperature", quantize: quantizeToSteps)
         }
         let preset = profile.colorPresets.map { presets in
             // Never longer than the settle delay, which tests shorten.
             let verifyDelay = min(timing.settleDelay, .milliseconds(300))
             return ColorPresetSelector(presets: presets,
-                                       control: makeControl(.colorPreset(on: device, presets: presets, verifyDelay: verifyDelay)))
+                                       control: makeControl(.colorPreset(on: device, presets: presets, verifyDelay: verifyDelay),
+                                                            label: "color preset"))
         }
         temperature?.onSettled = { [weak preset] in
             Task { await preset?.refresh() }
@@ -258,12 +263,44 @@ public final class Monitor: Identifiable {
 
     private func makeControl<Value>(
         _ backend: ControlBackend<Value>,
+        label: String,
         timing: ControlTiming? = nil,
         quantize: @escaping @Sendable (Value, ClosedRange<Double>?) -> Value = { value, _ in value }
     ) -> DeviceControl<Value> {
-        let control = DeviceControl(backend: backend, timing: timing ?? self.timing, quantize: quantize)
+        let control = DeviceControl(backend: recording(backend, label: label), timing: timing ?? self.timing, quantize: quantize)
         control.onLinkOutcome = { [weak self] outcome in self?.record(outcome) }
         return control
+    }
+
+    /// The same backend, recording every failure in the event log. The log
+    /// merges a failure that repeats, so a sleeping monitor does not flood it.
+    private func recording<Value>(_ backend: ControlBackend<Value>, label: String) -> ControlBackend<Value> {
+        let events = self.events
+        let name = self.name
+        var wrapped = backend
+        wrapped.read = {
+            do { return try await backend.read() } catch {
+                Self.record(error, doing: "read", label: label, of: name, in: events)
+                throw error
+            }
+        }
+        wrapped.write = { value in
+            do { try await backend.write(value) } catch {
+                Self.record(error, doing: "write", label: label, of: name, in: events)
+                throw error
+            }
+        }
+        return wrapped
+    }
+
+    private nonisolated static func record(_ error: any Error, doing verb: String, label: String, of name: String, in events: EventLog) {
+        if error is CancellationError { return }
+        let failure = ControlFailure(error)
+        if case DDCError.refused = error {
+            events.record("control", "\(name) \(label): write refused by the allow-list (\(failure.detail ?? "?"))")
+        } else {
+            events.record("control", "\(name) \(label) \(verb) failed: \(failure.message) [\(failure.detail ?? "?")]")
+        }
     }
 
     /// A control the monitor reports as unsupported is not shown.
@@ -324,15 +361,17 @@ public final class Monitor: Identifiable {
         audioDeviceID = info?.id
         audioDeviceName = info?.name
         guard let info else {
-            Log.audio.info("\(self.name, privacy: .public): no USB audio device")
+            Log.audio.notice("\(self.name, privacy: .public): no USB audio device")
+            events.record("audio", "\(name): USB audio device detached")
             volume = nil
             mute = nil
             return
         }
-        Log.audio.info("\(self.name, privacy: .public): volume on \(info.name, privacy: .public)")
+        Log.audio.notice("\(self.name, privacy: .public): volume on \(info.name, privacy: .public)")
+        events.record("audio", "\(name): volume on \(info.name)")
         let output = make(info)
-        let volume = makeControl(.volume(of: output), quantize: quantizeToPercent)
-        let mute = makeControl(.mute(of: output))
+        let volume = makeControl(.volume(of: output), label: "USB volume", quantize: quantizeToPercent)
+        let mute = makeControl(.mute(of: output), label: "USB mute")
         self.volume = volume
         self.mute = mute
         Task { [weak self] in

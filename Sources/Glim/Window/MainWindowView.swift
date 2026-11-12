@@ -232,7 +232,9 @@ struct CopyDiagnosticsButton: View {
 
     var body: some View {
         Button(copied ? "Copied" : "Copy Diagnostics") {
-            let report = manager.diagnosticsReport(appVersion: AppInfo.versionString)
+            let context = DiagnosticsContext(launchedAtLogin: LaunchInfo.launchedAtLogin,
+                                             loginItemStatus: SystemLoginItem().status.rawValue)
+            let report = manager.diagnosticsReport(appVersion: AppInfo.versionString, context: context)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(report, forType: .string)
             copied = true

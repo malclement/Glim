@@ -4,6 +4,10 @@ public protocol MonitorPlatform: Sendable {
     /// Whether DDC/CI can work at all on this Mac.
     var isDDCAvailable: Bool { get }
     var controlTiming: ControlTiming { get }
+    /// What the IORegistry and IOKit show about display transports, for
+    /// diagnostics and for noticing a display Glim cannot use. Reads the
+    /// registry on every access.
+    var transportSummary: TransportSummary { get }
     func discoverDisplays() async -> [DiscoveredDisplay]
     func makeDevice(for display: DiscoveredDisplay) -> any DDCDevice
     func audioOutputs() async -> [AudioDeviceInfo]
@@ -21,6 +25,8 @@ public struct LivePlatform: MonitorPlatform {
     public var isDDCAvailable: Bool { IOAVServiceAPI.shared != nil }
 
     public var controlTiming: ControlTiming { .standard }
+
+    public var transportSummary: TransportSummary { DisplayRegistry.transportSummary() }
 
     /// Reads the IORegistry. Being `nonisolated async`, it runs on the
     /// global executor, never on the caller's (main) actor.
