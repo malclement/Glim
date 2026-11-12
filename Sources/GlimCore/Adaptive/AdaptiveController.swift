@@ -100,7 +100,7 @@ public final class AdaptiveController {
     // MARK: Settings
 
     public func settings(for monitorID: String) -> AdaptiveSettings {
-        settings[monitorID] ?? AdaptiveSettings()
+        monitorValue(in: settings, for: monitorID) ?? AdaptiveSettings()
     }
 
     /// Changes a display's settings, applies them at once and keeps them.
