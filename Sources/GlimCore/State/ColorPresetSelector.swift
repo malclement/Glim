@@ -34,9 +34,9 @@ public final class ColorPresetSelector {
         presets.factory.flatMap { factory in options.first { $0.value == factory } }
     }
 
-    public func select(_ option: ColorPresetOption) {
+    public func select(_ option: ColorPresetOption, origin: ChangeOrigin = .user) {
         Log.state.notice("color preset \(option.name, privacy: .public) (0x\(String(option.value, radix: 16), privacy: .public))")
-        control.set(.preset(option.value))
+        control.set(.preset(option.value), origin: origin)
     }
 
     /// Reads the monitor again, unless a pick is being written.
