@@ -32,9 +32,28 @@ public final class MonitorManager {
     /// Bumped by each audio association, so an older one that finishes late
     /// cannot undo a newer one.
     @ObservationIgnored private var audioGeneration = 0
+    @ObservationIgnored private var wakeFollowUp: Task<Void, Never>?
+    @ObservationIgnored private let wakeRescanDelay: Duration
+    @ObservationIgnored private let wakeRereadDelays: [Duration]
+    @ObservationIgnored private let identityRetryDelay: Duration
 
-    public init(platform: any MonitorPlatform = LivePlatform()) {
+    /// - Parameters:
+    ///   - wakeRescanDelay: how long after a wake the displays are looked
+    ///     for again; the transport is often recreated a moment later.
+    ///   - wakeRereadDelays: when, after a wake, the monitors are read
+    ///     again. The first pass is unconditional; the later ones only
+    ///     concern a monitor still not answering, since DDC/CI can take
+    ///     longer than the picture to come back. A fixed few, not polling.
+    ///   - identityRetryDelay: how long before looking again for a display
+    ///     whose EDID is not published yet, up to three times.
+    public init(platform: any MonitorPlatform = LivePlatform(),
+                wakeRescanDelay: Duration = .seconds(2),
+                wakeRereadDelays: [Duration] = [.seconds(4), .seconds(10), .seconds(25)],
+                identityRetryDelay: Duration = .seconds(2)) {
         self.platform = platform
+        self.wakeRescanDelay = wakeRescanDelay
+        self.wakeRereadDelays = wakeRereadDelays
+        self.identityRetryDelay = identityRetryDelay
     }
 
     // MARK: Lifecycle
@@ -52,7 +71,6 @@ public final class MonitorManager {
         }
         availability = .available
         stopObserving = platform.observeDisplayChanges { [weak self] in
-            self?.identityRetries = 0
             self?.scheduleRescan()
         }
         scheduleRescan(after: .zero)
@@ -64,6 +82,8 @@ public final class MonitorManager {
         stopObserving = nil
         pendingRescan?.cancel()
         pendingRescan = nil
+        wakeFollowUp?.cancel()
+        wakeFollowUp = nil
         monitors.forEach { $0.invalidate() }
         monitors = []
         channels.removeAll()
@@ -75,6 +95,34 @@ public final class MonitorManager {
     /// Rescans after `delay`, replacing a rescan already scheduled. Display
     /// changes arrive in bursts, so the default debounces them.
     public func scheduleRescan(after delay: Duration = .milliseconds(750)) {
+        // Asked for from outside (a wake, new screen parameters, the
+        // toolbar): displays still without a name get their retries again.
+        identityRetries = 0
+        scheduleScan(after: delay)
+    }
+
+    /// The system or the displays woke. Looks for the displays again, then
+    /// reads every monitor whatever was read before the sleep, and comes
+    /// back a few times for one that does not answer yet.
+    public func displaysDidWake() {
+        guard started, platform.isDDCAvailable else { return }
+        scheduleRescan(after: wakeRescanDelay)
+        wakeFollowUp?.cancel()
+        let start = ContinuousClock.now
+        let delays = wakeRereadDelays
+        wakeFollowUp = Task { [weak self] in
+            for (index, delay) in delays.enumerated() {
+                do { try await Task.sleep(until: start.advanced(by: delay), clock: .continuous) } catch { return }
+                guard let self, self.started else { return }
+                let monitors = index == 0 ? self.monitors : self.monitors.filter { $0.status != .ready }
+                if index > 0, monitors.isEmpty { return }
+                await self.associateAudio()
+                for monitor in monitors { await monitor.refreshAfterWake() }
+            }
+        }
+    }
+
+    private func scheduleScan(after delay: Duration) {
         guard started, platform.isDDCAvailable else { return }
         pendingRescan?.cancel()
         pendingRescan = Task { [weak self] in
@@ -107,7 +155,7 @@ public final class MonitorManager {
             // transport. Look again shortly rather than show a nameless display.
             if displays.contains(where: { $0.identity == nil }), identityRetries < 3 {
                 identityRetries += 1
-                scheduleRescan(after: .seconds(2))
+                scheduleScan(after: identityRetryDelay)
             }
         } while rescanRequested
         isDiscovering = false

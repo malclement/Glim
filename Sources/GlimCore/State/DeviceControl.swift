@@ -138,6 +138,8 @@ public final class DeviceControl<Value: Sendable & Equatable> {
     ///   (automatic brightness), which doesn't count in ``userChanges``.
     public func set(_ newValue: Value, automatic: Bool = false) {
         guard !invalidated, value != nil else { return }
+        // Not a level anyone meant, and `Int(_:)` traps on it further down.
+        if let level = newValue as? Double, !level.isFinite { return }
         let target = quantize(newValue, range)
         if !automatic { userChanges &+= 1 }
         guard target != value || writer != nil else { return }
@@ -176,6 +178,14 @@ public final class DeviceControl<Value: Sendable & Equatable> {
         await readBack(expecting: generation)
     }
 
+    /// Forgets what was last written, so the next change is sent even if it
+    /// equals it. For when the device may have changed behind Glim's back:
+    /// a monitor that was asleep or switched off can come back at its own
+    /// defaults.
+    func forgetLastWritten() {
+        lastWritten = nil
+    }
+
     /// Stops all work. The control is dead afterwards.
     func invalidate() {
         invalidated = true
@@ -205,6 +215,10 @@ public final class DeviceControl<Value: Sendable & Equatable> {
                 // A dead control's late failure, from a transport that has
                 // since been replaced, says nothing about the monitor now.
                 guard !invalidated, !(error is CancellationError) else { continue }
+                // The frame may have reached the device all the same, so what
+                // it holds is unknown: going back to the earlier value must be
+                // sent, not skipped as "already written".
+                lastWritten = nil
                 // Shown on this control only. Whether the monitor as a whole
                 // answers is for the read-back to tell: a single dropped write
                 // must not swap the controls out from under a drag.
@@ -267,11 +281,17 @@ public final class DeviceControl<Value: Sendable & Equatable> {
 extension ControlBackend where Value == Double {
     /// A continuous VCP code. The range is 0 to the maximum the display
     /// reports with every read.
+    ///
+    /// A maximum of 0 is no range at all: a slider over it could only write
+    /// 0 or 1, and automatic brightness would take the display there by
+    /// itself. Such a code is treated as one the display does not offer. A
+    /// current value above the maximum is shown at the maximum.
     public static func vcpLevel(_ code: VCPCode, on device: any DDCDevice) -> ControlBackend<Double> {
         ControlBackend(
             read: {
                 let reading = try await device.read(code)
-                return DeviceReading(value: Double(reading.current), range: 0...Double(max(reading.maximum, 1)))
+                guard reading.maximum > 0 else { throw DDCError.unsupported(code) }
+                return DeviceReading(value: Double(min(reading.current, reading.maximum)), range: 0...Double(reading.maximum))
             },
             write: { value in
                 try await device.write(code, value: UInt16(clamping: Int(value.rounded())))
@@ -301,8 +321,11 @@ extension ControlBackend where Value == Double {
         return ControlBackend(
             read: {
                 let reading = try await device.read(.colorTemperature)
+                // The range starts at 1, so a maximum below 2 leaves nothing
+                // to choose.
+                guard reading.maximum > 1 else { throw DDCError.unsupported(.colorTemperature) }
                 withoutTemperature.withLock { $0 = reading.current == 0 }
-                return DeviceReading(value: Double(reading.current), range: 1...Double(max(reading.maximum, 1)))
+                return DeviceReading(value: Double(min(reading.current, reading.maximum)), range: 1...Double(reading.maximum))
             },
             write: { value in
                 if let preset = scale.kelvinPreset, withoutTemperature.withLock({ $0 }) {

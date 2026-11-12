@@ -56,6 +56,10 @@ public final class Monitor: Identifiable {
     /// 0x0B, needed for a temperature in kelvin, did not answer.
     @ObservationIgnored private var temperatureIncrementMissed = false
     private static let maxCapabilityAttempts = 3
+    /// DDC reads that failed in a row, with none answered in between.
+    @ObservationIgnored private var failedReads = 0
+    /// DDC reads answered so far, to tell whether a pass got any.
+    @ObservationIgnored private var answeredReads = 0
     /// Whether ``volume`` and ``mute`` go over DDC/CI (rebuilt with the other
     /// DDC controls) rather than to a USB Audio device (attached separately).
     @ObservationIgnored private var volumeIsDDC = false
@@ -277,18 +281,36 @@ public final class Monitor: Identifiable {
         if unsupported(mute) { mute?.invalidate(); mute = nil }
     }
 
+    /// One read lost on a busy bus is that control's trouble, shown on it:
+    /// the monitor is only "not responding" once two reads in a row went
+    /// unanswered, or a whole pass over the controls got nothing
+    /// (``readAll()``). Otherwise a single flaky code would take every
+    /// working slider off the screen.
     private func record(_ outcome: Result<Void, any Error>) {
         switch outcome {
         case .success:
-            status = .ready
+            answered()
         case .failure(let error):
             // "Unsupported code" proves the link works.
             if let error = error as? DDCError, !error.isTransient {
-                status = .ready
+                answered()
             } else {
-                status = .notResponding
+                failedReads += 1
+                if failedReads >= 2 { setStatus(.notResponding) }
             }
         }
+    }
+
+    private func answered() {
+        failedReads = 0
+        answeredReads &+= 1
+        setStatus(.ready)
+    }
+
+    /// Assigned only on a change: an assignment redraws every view reading
+    /// it, even with an equal value.
+    private func setStatus(_ new: Status) {
+        if status != new { status = new }
     }
 
     // MARK: Audio
@@ -341,20 +363,44 @@ public final class Monitor: Identifiable {
             await volume?.refresh()
             await mute?.refresh()
         }
-        if let brightness {
-            await brightness.refresh()
-            // If the monitor did not answer the first read, the others
-            // would only spend their retries finding the same thing.
-            if status == .notResponding, brightness.failure != nil { return }
-        }
-        await contrast?.refresh()
-        await colorTemperature?.refresh()
-        await colorPreset?.refresh()
-        await input?.control.refresh()
+        let answeredBefore = answeredReads
+        let failedBefore = failedReads
+        var reads: [@MainActor () async -> Void] = []
+        if let brightness { reads.append { await brightness.refresh() } }
+        if let contrast { reads.append { await contrast.refresh() } }
+        if let colorTemperature { reads.append { await colorTemperature.refresh() } }
+        if let colorPreset { reads.append { await colorPreset.refresh() } }
+        if let input { reads.append { await input.control.refresh() } }
         if volumeIsDDC {
-            await volume?.refresh()
-            await mute?.refresh()
+            if let volume { reads.append { await volume.refresh() } }
+            if let mute { reads.append { await mute.refresh() } }
         }
+        for read in reads {
+            await read()
+            // Two reads in a row unanswered: the rest would only spend
+            // their retries finding the same thing.
+            if status == .notResponding, failedReads >= 2 { return }
+        }
+        // A pass that got no answer at all, even from a single control.
+        if answeredReads == answeredBefore, failedReads > failedBefore, !invalidated {
+            setStatus(.notResponding)
+        }
+    }
+
+    /// Reads everything again after the displays woke, whatever was read
+    /// before the sleep: a monitor can come back at its own defaults, with
+    /// the same transport, and nothing else would notice.
+    func refreshAfterWake() async {
+        guard !invalidated else { return }
+        brightness?.forgetLastWritten()
+        contrast?.forgetLastWritten()
+        colorTemperature?.forgetLastWritten()
+        colorPreset?.control.forgetLastWritten()
+        if volumeIsDDC {
+            volume?.forgetLastWritten()
+            mute?.forgetLastWritten()
+        }
+        await refresh()
     }
 
     /// Whether the volume controls drive a USB device, which keeps working
