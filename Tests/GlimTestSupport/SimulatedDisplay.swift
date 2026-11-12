@@ -24,6 +24,10 @@ package final class SimulatedDisplay: Sendable {
         /// 0x0C and 0x14 move together as on the HP E27m G4, which reads
         /// 0x14 back in its own numbering (``hpColorPresets``).
         package var hpColorCoupling = false
+        /// The HP's custom temperature state: 0x0C was last written to a
+        /// value that is no preset's own, and keeps reading it whatever is
+        /// written to 0x14.
+        package var hpCustomTemperature = false
         package var reply: [UInt8]?
         /// Every frame written, including repeats.
         package var frames: [[UInt8]] = []
@@ -164,23 +168,31 @@ package final class SimulatedDisplay: Sendable {
         0x0B: (15, 0), 0x0C: (2, 0), 0x0D: (4, 0),
     ]
 
-    /// What 0x14 reads after 0x0C is set to each measured value. Between
-    /// them the simulator takes the nearest one, which is a guess: the
-    /// bucket edges were never measured.
-    package static let hpTemperatureBuckets: [(temperature: UInt16, preset: UInt16)] = [
-        (0, 15), (40, 5), (55, 8), (70, 8), (100, 2), (126, 2),
-    ]
+    /// What 0x14 reads after 0x0C is set by hand. Every edge was measured
+    /// on both sides (data/safe-probes-2026-11-12.md).
+    package static func hpTemperatureBucket(for temperature: UInt16) -> UInt16 {
+        switch temperature {
+        case 0: 15
+        case 1...40: 5
+        case 41...70: 8
+        default: 2
+        }
+    }
+
+    /// The 0x0C values that are a Kelvin preset's own. Any other value set
+    /// by hand, except 0, starts the custom temperature state.
+    package static let hpPresetTemperatures: Set<UInt16> = [40, 70, 126]
 
     private static func coupleColor(code: UInt8, value: UInt16, in state: inout State) {
         switch code {
         case 0x14:
             guard let reading = hpColorPresets[value] else { return }
             state.values[0x14]?.current = reading.preset
-            state.values[0x0C]?.current = reading.temperature
+            // A temperature set by hand stays, whatever the preset.
+            if !state.hpCustomTemperature { state.values[0x0C]?.current = reading.temperature }
         case 0x0C:
-            let candidates = hpTemperatureBuckets.filter { ($0.temperature == 0) == (value == 0) }
-            let nearest = candidates.min { abs(Int($0.temperature) - Int(value)) < abs(Int($1.temperature) - Int(value)) }
-            if let nearest { state.values[0x14]?.current = nearest.preset }
+            state.values[0x14]?.current = hpTemperatureBucket(for: value)
+            state.hpCustomTemperature = value != 0 && !hpPresetTemperatures.contains(value)
         default:
             break
         }

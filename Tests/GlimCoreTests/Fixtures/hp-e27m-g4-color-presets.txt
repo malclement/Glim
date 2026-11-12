@@ -21,3 +21,10 @@
 0C=40     14=5
 0C=55     14=8
 0C=100    14=2
+# Bucket edges, each read on both sides. Measured 2026-11-12
+# (data/safe-probes-2026-11-12.md).
+0C=1      14=5
+0C=41     14=8
+0C=70     14=8
+0C=71     14=2
+0C=126    14=2

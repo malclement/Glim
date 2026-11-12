@@ -237,7 +237,10 @@ public final class Monitor: Identifiable {
             makeControl(.colorTemperature(on: device, scale: scale), quantize: quantizeToSteps)
         }
         let preset = profile.colorPresets.map { presets in
-            ColorPresetSelector(presets: presets, control: makeControl(.colorPreset(on: device, presets: presets)))
+            // Never longer than the settle delay, which tests shorten.
+            let verifyDelay = min(timing.settleDelay, .milliseconds(300))
+            return ColorPresetSelector(presets: presets,
+                                       control: makeControl(.colorPreset(on: device, presets: presets, verifyDelay: verifyDelay)))
         }
         temperature?.onSettled = { [weak preset] in
             Task { await preset?.refresh() }

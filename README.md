@@ -17,7 +17,7 @@ Glim is a native menu bar app for Macs with Apple silicon, with a window that ho
 | --- | --- | --- |
 | Brightness | DDC/CI VCP 0x10 | ✅ verified |
 | Contrast | DDC/CI VCP 0x12 | ✅ verified |
-| Color temperature (3050–9300 K) and presets (sRGB, native, 5000 K, 6500 K factory, 9300 K) | DDC/CI VCP 0x0C and 0x14 | ⚠️ both codes verified with the CLI; the app's controls not yet run on the hardware |
+| Color temperature (3050–9300 K) and presets (sRGB, native, 5000 K, 6500 K factory, 9300 K) | DDC/CI VCP 0x0C and 0x14 | ✅ through the app's controls in the hardware tests, by read-back; nobody has compared the picture |
 | Volume and mute | the monitor's USB Audio device (DDC 0x62 only mirrors it) | ✅ verified |
 | Input (DisplayPort, HDMI, USB-C) | DDC/CI VCP 0x60, after a confirmation | ⚠️ implemented, not yet tried on the hardware |
 

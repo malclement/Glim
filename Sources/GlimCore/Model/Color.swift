@@ -82,6 +82,15 @@ public struct ColorPresets: Sendable, Equatable {
         return match.map { .preset($0.value) } ?? .other(reading: reading, temperature: temperature)
     }
 
+    /// A 0x0C value that is some preset's own, the factory one's if it has
+    /// one. Writing it ends a temperature set by hand without leaving the
+    /// monitor between presets.
+    public var neutralTemperature: UInt16? {
+        let factoryOption = factory.flatMap { factory in options.first { $0.value == factory } }
+        if let temperature = factoryOption?.temperature, temperature != 0 { return temperature }
+        return options.lazy.compactMap(\.temperature).first { $0 != 0 }
+    }
+
     public func option(for value: ColorPresetValue) -> ColorPresetOption? {
         guard case .preset(let raw) = value else { return nil }
         return options.first { $0.value == raw }
