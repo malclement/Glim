@@ -174,18 +174,23 @@ struct ColorPresetRow: View {
     let selector: ColorPresetSelector
 
     var body: some View {
+        // The same three columns as a slider row: the symbol, the control
+        // from the slider's leading edge to its trailing one, then the slot
+        // the sliders keep for their value.
         HStack(spacing: 8) {
             Image(systemName: "paintpalette")
                 .foregroundStyle(.secondary)
                 .frame(width: 20)
+                .help("Color preset")
                 .accessibilityHidden(true)
-            Text("Color")
-            if let failure = selector.failure {
-                FailureBadge(failure: failure)
+            ColorPresetPicker(selector: selector, fillsWidth: true)
+            HStack(spacing: 3) {
+                if let failure = selector.failure {
+                    FailureBadge(failure: failure)
+                }
+                FactoryColorButton(selector: selector)
             }
-            Spacer(minLength: 8)
-            ColorPresetPicker(selector: selector)
-            FactoryColorButton(selector: selector)
+            .frame(width: LevelSlider.valueWidth, alignment: .trailing)
         }
     }
 }
@@ -218,6 +223,9 @@ struct FactoryColorButton: View {
 /// always in the list to come back to.
 struct ColorPresetPicker: View {
     let selector: ColorPresetSelector
+    /// Takes the width it is given, as a slider does, instead of the width
+    /// of its longest name.
+    var fillsWidth = false
 
     private var selection: Binding<ColorPresetValue> {
         Binding(
@@ -243,7 +251,7 @@ struct ColorPresetPicker: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            .shrinksBeforeOverflowing()
+            .popUpWidth(fills: fillsWidth)
             .accessibilityLabel("Color preset")
         } else {
             Text("–")
@@ -268,13 +276,15 @@ struct InputRow: View {
                 Image(systemName: "cable.connector")
                     .foregroundStyle(.secondary)
                     .frame(width: 20)
+                    .help("Input")
                     .accessibilityHidden(true)
-                Text("Input")
-                if let failure = selector.failure {
-                    FailureBadge(failure: failure)
+                InputPicker(selector: selector, fillsWidth: true)
+                HStack(spacing: 3) {
+                    if let failure = selector.failure {
+                        FailureBadge(failure: failure)
+                    }
                 }
-                Spacer(minLength: 8)
-                InputPicker(selector: selector)
+                .frame(width: LevelSlider.valueWidth, alignment: .trailing)
             }
             if let pending = selector.pendingSelection {
                 InputConfirmation(selector: selector, target: pending, isTested: isTested)
@@ -289,6 +299,8 @@ struct InputRow: View {
 /// Picking only stages the switch: see ``InputConfirmation``.
 struct InputPicker: View {
     let selector: InputSelector
+    /// Takes the width it is given, as a slider does.
+    var fillsWidth = false
 
     private var selection: Binding<UInt16> {
         Binding(
@@ -319,7 +331,7 @@ struct InputPicker: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            .shrinksBeforeOverflowing()
+            .popUpWidth(fills: fillsWidth)
             .accessibilityLabel("Input")
         }
     }
@@ -485,6 +497,17 @@ extension View {
         ViewThatFits(in: .horizontal) {
             fixedSize()
             fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// A pop-up button's width: the room it is given, or its natural width
+    /// while that fits.
+    @ViewBuilder
+    func popUpWidth(fills: Bool) -> some View {
+        if fills {
+            fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity)
+        } else {
+            shrinksBeforeOverflowing()
         }
     }
 }

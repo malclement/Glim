@@ -12,9 +12,8 @@ struct MonitorDetailView: View {
 
     var body: some View {
         Form {
-            Section {
-                MonitorHeader(monitor: monitor, title: store?.title(for: monitor, in: manager) ?? manager.title(for: monitor))
-            }
+            // The window's title and subtitle name the display and its state,
+            // so the pane starts with the controls.
             MonitorControls(monitor: monitor, adaptive: adaptive)
                 .labelStyle(IconColumnLabelStyle())
             if let store {
@@ -120,44 +119,6 @@ private struct MenuChoices: View {
                 }
             }
         }
-    }
-}
-
-/// The monitor's name and status.
-private struct MonitorHeader: View {
-    let monitor: Monitor
-    let title: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "display")
-                .font(.system(size: 30, weight: .light))
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.title3.weight(.semibold))
-                    .lineLimit(1)
-                    .help(title)
-                    .accessibilityAddTraits(.isHeader)
-                Text(MonitorText.status(monitor.status))
-                    .foregroundStyle(.secondary)
-            }
-            .accessibilityElement(children: .combine)
-            Spacer(minLength: 0)
-            if monitor.status == .connecting {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel("Connecting")
-            }
-            if !monitor.profile.isTested {
-                Label("Untested", systemImage: "info.circle")
-                    .foregroundStyle(.secondary)
-                    .help("Glim hasn't been tested with this display. Its controls come from the display's own description.")
-                    .accessibilityHint("Glim hasn't been tested with this display. Its controls come from the display's own description.")
-            }
-        }
-        .padding(.vertical, 2)
     }
 }
 

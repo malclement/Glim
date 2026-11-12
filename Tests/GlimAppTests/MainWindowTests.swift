@@ -46,9 +46,22 @@ import Testing
         #expect(controller.prepareWindow() === log.windows.first)
     }
 
+    /// The window is named after the display it shows, with the display's
+    /// state under it, and follows the sidebar.
+    @Test func theWindowIsNamedAfterWhatItShows() async throws {
+        let (setup, monitor, simulated) = try await Setup.readyHP()
+        let window = MainWindowController(manager: setup.manager, present: { _ in }).prepareWindow()
+        #expect(OffscreenRenderer.spin(until: { window.title == "HP E27m G4" && window.subtitle == "Connected" }),
+                "title \(window.title), subtitle \(window.subtitle)")
+        simulated.update { $0.silent = true }
+        await monitor.refresh()
+        #expect(OffscreenRenderer.spin(until: { window.subtitle == "Not responding" }))
+    }
+
     @Test func theWindowIsOneMacOSDoesNotBringBackByItself() {
         let controller = MainWindowController(manager: MonitorManager(platform: FakePlatform()))
         let window = controller.prepareWindow()
+        // With no display to show, the window is named after the app.
         #expect(window.title == "Glim")
         #expect(!window.isRestorable)
         #expect(!window.isReleasedWhenClosed)

@@ -31,6 +31,19 @@ struct MainWindowView: View {
         return manager.monitors.first
     }
 
+    /// The window is named after what it shows, as a document window is,
+    /// with the display's state under it.
+    private var windowTitle: String {
+        if let scene = shownScene { return scene.name }
+        if let monitor = shownMonitor { return store?.title(for: monitor, in: manager) ?? manager.title(for: monitor) }
+        return "Glim"
+    }
+
+    private var windowSubtitle: String {
+        if let scene = shownScene { return scene.isActive(on: manager.monitors) ? "Active scene" : "Scene" }
+        return shownMonitor.map { MonitorText.status($0.status) } ?? ""
+    }
+
     private var shownItem: SidebarItem? {
         shownScene.map { .scene($0.id) } ?? shownMonitor.map { .monitor($0.id) }
     }
@@ -67,6 +80,10 @@ struct MainWindowView: View {
             }
         }
         .frame(minWidth: 620, minHeight: 440)
+        .background(WindowTitle(title: windowTitle))
+        // The toolbar bridge owns the subtitle: it clears one set on the
+        // window, and takes this one.
+        .navigationSubtitle(windowSubtitle)
         .confirmationDialog(
             "Delete “\(store?.scene(sceneToDelete)?.name ?? "")”?",
             isPresented: Binding(get: { sceneToDelete != nil }, set: { if !$0 { sceneToDelete = nil } })
@@ -277,6 +294,37 @@ struct CopyDiagnosticsButton: View {
             } catch {
                 // The button went away first.
             }
+        }
+    }
+}
+
+/// Sets the title of the window the view is in. The window is AppKit's
+/// (``MainWindowController``), and a navigation title set in the detail
+/// column does not reach it.
+private struct WindowTitle: NSViewRepresentable {
+    let title: String
+
+    func makeNSView(context: Context) -> TitleView { TitleView() }
+
+    func updateNSView(_ view: TitleView, context: Context) {
+        view.title = title
+        view.apply()
+    }
+
+    final class TitleView: NSView {
+        var title = ""
+
+        /// Assigns only what changed: the title is also the window's name in
+        /// the Window menu and in Mission Control.
+        func apply() {
+            guard let window else { return }
+            if window.title != title { window.title = title }
+        }
+
+        // The first update comes before the view is in its window.
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            apply()
         }
     }
 }

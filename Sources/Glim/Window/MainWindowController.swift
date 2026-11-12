@@ -83,9 +83,11 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: Self.defaultContentSize),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
+        // Before the view goes in: the view then names the window after the
+        // display or scene it shows.
+        window.title = "Glim"
         window.contentViewController = controller
         window.setContentSize(Self.defaultContentSize)
-        window.title = "Glim"
         window.identifier = Self.identifier
         window.isReleasedWhenClosed = false
         // Glim decides at launch whether to show the window; macOS must not
