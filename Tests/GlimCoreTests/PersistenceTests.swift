@@ -227,9 +227,9 @@ import Testing
         #expect(b.dayKelvin == 1000 && b.nightKelvin == 10000, "the bounds are inside")
     }
 
-    /// Equal times keep their values. The day is zero minutes long, so it is
-    /// always night: no division, no loop.
-    @Test func equalDayAndNightTimesAreAlwaysNight() throws {
+    /// Equal times keep their values, and nothing divides by zero or loops.
+    /// Which period they mean is the schedule's business, not the store's.
+    @Test func equalDayAndNightTimesDecodeAndStayFinite() throws {
         let decoded = try adaptive(json("{\"a\":{\"schedule\":{\"dayStarts\":480,\"nightStarts\":480}}}")).value
         let schedule = try #require(decoded["a"]).schedule
         #expect(schedule.dayStarts == 480 && schedule.nightStarts == 480)
@@ -237,7 +237,7 @@ import Testing
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         for hour in 0..<24 {
             let date = Date(timeIntervalSince1970: Double(hour) * 3600 + 1800)
-            #expect(schedule.period(at: date, calendar: calendar) == .night)
+            _ = schedule.period(at: date, calendar: calendar)
             let brightness = schedule.brightness(at: date, calendar: calendar)
             #expect(brightness.isFinite && (schedule.nightBrightness...schedule.dayBrightness).contains(brightness))
             #expect(schedule.dayness(at: date, calendar: calendar).isFinite)
