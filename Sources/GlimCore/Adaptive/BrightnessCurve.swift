@@ -25,6 +25,21 @@ public struct BrightnessCurve: Codable, Hashable, Sendable {
         self.points = Self.normalized(points)
     }
 
+    private enum CodingKeys: String, CodingKey { case points }
+
+    /// Goes through the same normalisation as ``init(points:)``: sorted,
+    /// monotonic, finite, `y` within 0 to 1. Points that can't be read, or
+    /// aren't numbers, are dropped. If none is left it throws, so the owner
+    /// can substitute the default curve that suits it.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let stored = container.decodeLossyArray(.points, of: Point.self) ?? []
+        guard stored.contains(where: { $0.x.isFinite && $0.y.isFinite }) else {
+            throw DecodingError.dataCorruptedError(forKey: .points, in: container, debugDescription: "no usable point")
+        }
+        self.init(points: stored)
+    }
+
     /// About 20% in the dark, rising to 100% at 1000 lux (an overcast
     /// daylit room), over log(lux).
     public static let lightDefault = BrightnessCurve(points: [Point(x: 0, y: 0.20), Point(x: lightReading(lux: 1000), y: 1)])
@@ -57,6 +72,7 @@ public struct BrightnessCurve: Codable, Hashable, Sendable {
     /// left of it that is brighter comes down to it, and one right of it
     /// that is dimmer comes up to it.
     public mutating func learn(x: Double, y: Double) {
+        guard x.isFinite, y.isFinite else { return }
         let y = min(max(y, 0), 1)
         var points = self.points.filter { abs($0.x - x) >= Self.mergeDistance }
         for index in points.indices {
@@ -78,7 +94,10 @@ public struct BrightnessCurve: Codable, Hashable, Sendable {
     }
 
     private static func normalized(_ points: [Point]) -> [Point] {
-        var sorted = points.sorted { $0.x < $1.x }
+        // Never hold a value that can't be saved or compared: non-finite
+        // points are dropped and brightness stays within 0 to 1.
+        let usable = points.filter { $0.x.isFinite && $0.y.isFinite }.map { Point(x: $0.x, y: min(max($0.y, 0), 1)) }
+        var sorted = usable.sorted { $0.x < $1.x }
         if sorted.isEmpty { sorted = [Point(x: 0, y: 1)] }
         if sorted.count == 1 { sorted.append(Point(x: sorted[0].x + 1, y: sorted[0].y)) }
         // Never decreasing: a later point is at least as bright.

@@ -94,6 +94,107 @@ extension DisplayScene {
     public var shownSymbol: String { symbol ?? Self.defaultSymbol }
 }
 
+// MARK: - Tolerant decoding
+
+// Scenes outlive releases: a scene written by an older Glim lacks the fields
+// added since, and one written by a newer Glim has fields and cases this one
+// doesn't know. Every type here decodes what it can and defaults the rest,
+// and writes the shape 0.3.0 and 0.4.0 wrote, so a downgrade still reads it.
+
+extension DisplayScene.Level {
+    enum CodingKeys: String, CodingKey { case value, maximum }
+
+    /// `value` is required, a level without one means nothing. A missing
+    /// `maximum` is taken to be 100, the usual VCP range.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let value = try container.decode(Double.self, forKey: .value)
+        guard value.isFinite else {
+            throw DecodingError.dataCorruptedError(forKey: .value, in: container, debugDescription: "not a number")
+        }
+        let maximum: Double = container.decode(.maximum, default: 100)
+        self.init(value: value, maximum: maximum.isFinite ? maximum : 100)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(value.isFinite ? value : 0, forKey: .value)
+        try container.encode(maximum.isFinite ? maximum : 100, forKey: .maximum)
+    }
+}
+
+extension DisplayScene.Color {
+    private enum CodingKeys: String, CodingKey { case preset, temperature }
+    private enum PresetKeys: String, CodingKey { case value, name }
+    private enum TemperatureKeys: String, CodingKey { case steps, kelvin }
+
+    /// A color this release doesn't know, or one missing what it needs,
+    /// throws; ``DisplayScene/Settings`` then leaves the color out.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if container.contains(.preset) {
+            let preset = try container.nestedContainer(keyedBy: PresetKeys.self, forKey: .preset)
+            self = .preset(value: try preset.decode(UInt16.self, forKey: .value), name: preset.decode(.name, default: ""))
+        } else if container.contains(.temperature) {
+            let temperature = try container.nestedContainer(keyedBy: TemperatureKeys.self, forKey: .temperature)
+            let steps = try temperature.decode(Double.self, forKey: .steps)
+            guard steps.isFinite else {
+                throw DecodingError.dataCorruptedError(forKey: .steps, in: temperature, debugDescription: "not a number")
+            }
+            self = .temperature(steps: steps, kelvin: try temperature.decode(Int.self, forKey: .kelvin))
+        } else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "unknown color"))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .preset(let value, let name):
+            var preset = container.nestedContainer(keyedBy: PresetKeys.self, forKey: .preset)
+            try preset.encode(value, forKey: .value)
+            try preset.encode(name, forKey: .name)
+        case .temperature(let steps, let kelvin):
+            var temperature = container.nestedContainer(keyedBy: TemperatureKeys.self, forKey: .temperature)
+            try temperature.encode(steps.isFinite ? steps : 0, forKey: .steps)
+            try temperature.encode(kelvin, forKey: .kelvin)
+        }
+    }
+}
+
+extension DisplayScene.Settings {
+    enum CodingKeys: String, CodingKey { case monitorName, brightness, contrast, color }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(monitorName: container.decode(.monitorName, default: ""), brightness: container.decodeOptional(.brightness),
+                  contrast: container.decodeOptional(.contrast), color: container.decodeOptional(.color))
+    }
+}
+
+extension DisplayScene {
+    enum CodingKeys: String, CodingKey { case id, name, symbol, includes, monitors }
+
+    /// A scene without an id gets a new one, one without a name is called
+    /// "Scene", one without `includes` applies every part. Parts this release
+    /// doesn't know are dropped; monitors whose settings can't be read are
+    /// left out.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let parts = container.decodeLossyArray(.includes, of: Part.self)
+        self.init(id: container.decode(.id, default: UUID()), name: container.decode(.name, default: "Scene"),
+                  symbol: container.decodeOptional(.symbol), includes: parts.map(Set.init) ?? Set(Part.allCases),
+                  monitors: container.decodeLossyDictionary(.monitors, of: Settings.self) ?? [:])
+    }
+
+    /// What this scene holds for `monitorID`: its own entry, else the one of
+    /// the same model without the suffix that tells identical monitors apart
+    /// (see ``monitorValue(in:for:)``).
+    public func settings(for monitorID: String) -> Settings? {
+        monitorValue(in: monitors, for: monitorID)
+    }
+}
+
 // MARK: - Capturing and applying
 
 extension DisplayScene.Settings {
@@ -132,7 +233,9 @@ extension DisplayScene {
     /// Monitors that are away keep their saved settings.
     @MainActor
     public mutating func recapture(_ monitors: [Monitor]) {
-        for monitor in monitors {
+        // A display whose EDID isn't known yet has no stable id to keep
+        // settings under.
+        for monitor in monitors where !isTransientMonitorID(monitor.id) {
             if let settings = Settings(capturing: monitor) { self.monitors[monitor.id] = settings }
         }
     }
@@ -140,7 +243,7 @@ extension DisplayScene {
     /// The connected monitors this scene has settings for.
     @MainActor
     public func connected(in monitors: [Monitor]) -> [Monitor] {
-        monitors.filter { self.monitors[$0.id]?.hasAny(of: includes) == true }
+        monitors.filter { settings(for: $0.id)?.hasAny(of: includes) == true }
     }
 
     /// Sets every connected monitor it has settings for. Returns how many
@@ -150,7 +253,7 @@ extension DisplayScene {
     public func apply(to monitors: [Monitor]) -> Int {
         Log.state.notice("applying scene \(self.name, privacy: .public)")
         return connected(in: monitors).filter { monitor in
-            self.monitors[monitor.id].map { monitor.apply($0, parts: includes) } ?? false
+            self.settings(for: monitor.id).map { monitor.apply($0, parts: includes) } ?? false
         }.count
     }
 
@@ -160,7 +263,7 @@ extension DisplayScene {
     public func isActive(on monitors: [Monitor]) -> Bool {
         let relevant = connected(in: monitors)
         return !relevant.isEmpty && relevant.allSatisfy { monitor in
-            self.monitors[monitor.id].map { monitor.shows($0, parts: includes) } ?? false
+            self.settings(for: monitor.id).map { monitor.shows($0, parts: includes) } ?? false
         }
     }
 }
