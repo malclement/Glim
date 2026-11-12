@@ -30,6 +30,8 @@ make probes   # the read-only macOS probes in tools/macos-probe
 | `tools/macos-probe/hidprobe <vendor-id>` | HID report descriptors: buttons, LEDs, vendor channels | no |
 | `tools/macos-probe/camprobe` | webcam formats as AVFoundation sees them | no |
 | `tools/macos-probe/hpvolume` | reads or sets the **HP E27m G4's** USB audio level. Its device name is hard-wired; edit line 57 for another monitor | yes, the audio level |
+| `tools/macos-probe/displaymode` | lists or sets the **HP E27m G4's** display mode, to test scaling at a non-native resolution. Its EDID vendor and product are hard-wired at the top | yes, the resolution |
+| `tools/macos-probe/uacprobe <vid> <pid> <unit> <control> <channel> <len> [raw]` | USB Audio class requests to a feature unit CoreAudio doesn't expose, such as a sidetone | only when given a value |
 
 `./glim help` lists every command. The options go before the command: `-d N` picks external display N, `-v` hex-dumps every frame, `--force` allows the hazardous writes, and `--no-verify` skips the read-back after `set`.
 
