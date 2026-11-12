@@ -39,6 +39,19 @@ enum Situation: String, CaseIterable, Sendable {
     /// Automatic brightness following a dim room (10 lux), with one
     /// learned point, and evening warmth on.
     case adaptive
+    /// Three HP monitors: the menu is taller than a laptop screen leaves room for.
+    case threeMonitors = "three-monitors"
+    /// Display and scene names of 60 characters.
+    case longNames = "long-names"
+    /// Two monitors of one model and one USB audio device: nothing says whose
+    /// it is, so neither gets a volume control.
+    case ambiguousSpeakers = "ambiguous-speakers"
+    /// Automatic brightness paused because the brightness was set by hand.
+    case adaptivePaused = "adaptive-paused"
+    /// A scene whose only display is away, shown in the menu.
+    case sceneAway = "scene-away"
+    /// Every display hidden from the menu in the window.
+    case allHidden = "all-hidden"
 }
 
 /// Renders the app's real views, in every designed state, in an offscreen
@@ -171,6 +184,11 @@ struct Setup {
 
     static let hpAudio = AudioDeviceInfo(id: 97, name: "HP E27m G4 USB Audio", isUSB: true)
 
+    /// 60 characters, past any row's width.
+    static func longName(_ prefix: String) -> String {
+        String((prefix + " " + String(repeating: "wide name ", count: 8)).prefix(60))
+    }
+
     static func hp(_ serviceID: UInt64 = 1, pipe: String = "dispext0") -> DiscoveredDisplay {
         DiscoveredDisplay(serviceID: serviceID, framebuffer: pipe, identity: TestIdentity.hp)
     }
@@ -236,6 +254,66 @@ struct Setup {
             adaptive.tick()
             setup.store = GlimStore(defaults: nil)
             setup.adaptive = adaptive
+            return setup
+
+        case .adaptivePaused:
+            let setup = try await make(.adaptive)
+            let monitor = try #require(setup.manager.monitors.first)
+            let adaptive = try #require(setup.adaptive)
+            monitor.brightness?.set(20)
+            #expect(await eventually { monitor.brightness?.value == 20 && monitor.brightness?.isWriting == false })
+            adaptive.tick()
+            #expect(await eventually { adaptive.statuses[monitor.id] == .paused })
+            return setup
+
+        case .threeMonitors:
+            let platform = FakePlatform()
+            platform.connect(hp())
+            for (index, serial) in ["TEST0000002", "TEST0000003"].enumerated() {
+                let identity = DisplayIdentity(vendorID: 0x220E, productID: 0x3753, alphanumericSerial: serial, productName: "HP E27m G4")
+                platform.connect(DiscoveredDisplay(serviceID: UInt64(index + 2), framebuffer: "dispext\(index + 1)", identity: identity))
+            }
+            let manager = await started(platform)
+            #expect(await eventually { manager.monitors.count == 3 && manager.monitors.allSatisfy { $0.input?.current != nil && $0.colorPreset?.current != nil } })
+            return Setup(manager: manager, platform: platform)
+
+        case .longNames:
+            var (setup, monitor, _) = try await readyHP()
+            let store = GlimStore(defaults: nil)
+            let scene = store.addScene(capturing: setup.manager.monitors)
+            store.rename(scene.id, to: Self.longName("Scene"))
+            store.setName(Self.longName("Display"), for: monitor.id)
+            setup.store = store
+            return setup
+
+        case .ambiguousSpeakers:
+            let platform = FakePlatform()
+            platform.connect(hp())
+            let second = DisplayIdentity(vendorID: 0x220E, productID: 0x3753, alphanumericSerial: "TEST0000002", productName: "HP E27m G4")
+            platform.connect(DiscoveredDisplay(serviceID: 2, framebuffer: "dispext1", identity: second))
+            platform.addAudio(hpAudio)
+            let manager = await started(platform)
+            #expect(await eventually { manager.monitors.count == 2 && manager.monitors.allSatisfy { $0.input?.current != nil } })
+            #expect(manager.monitors.allSatisfy { $0.volume == nil && $0.audioUnattachedReason == .ambiguous })
+            return Setup(manager: manager, platform: platform)
+
+        case .sceneAway:
+            var (setup, monitor, _) = try await readyHP()
+            let store = GlimStore(defaults: nil)
+            let scene = store.addScene(capturing: setup.manager.monitors)
+            store.rename(scene.id, to: "Office")
+            store.updateScene(scene.id) { scene in
+                scene.monitors = ["AOC-U34G2G4R3": .init(monitorName: "U34G2G4R3", brightness: .init(value: 40, maximum: 100))]
+            }
+            #expect(store.scene(scene.id)?.connected(in: [monitor]).isEmpty == true)
+            setup.store = store
+            return setup
+
+        case .allHidden:
+            var (setup, monitor, _) = try await readyHP()
+            let store = GlimStore(defaults: nil)
+            store.updateDisplay(monitor.id) { $0.showsInMenu = false }
+            setup.store = store
             return setup
 
         case .scenes:
