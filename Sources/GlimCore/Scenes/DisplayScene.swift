@@ -92,6 +92,30 @@ extension DisplayScene {
     ]
 
     public var shownSymbol: String { symbol ?? Self.defaultSymbol }
+
+    /// A name a person can read or hear for each of ``symbols``.
+    public static let symbolNames: [String: String] = [
+        "sparkles.rectangle.stack": "Sparkles",
+        "sun.max": "Sun",
+        "sun.horizon": "Sunrise",
+        "sunset": "Sunset",
+        "moon": "Moon",
+        "moon.stars": "Moon and stars",
+        "lightbulb": "Light bulb",
+        "book": "Book",
+        "doc.text": "Document",
+        "film": "Film",
+        "gamecontroller": "Game controller",
+        "paintbrush": "Paintbrush",
+        "camera": "Camera",
+        "cup.and.saucer": "Cup and saucer",
+    ]
+
+    /// The readable name of `symbol`; the symbol's own name for one not in
+    /// ``symbols``.
+    public static func name(ofSymbol symbol: String) -> String {
+        symbolNames[symbol] ?? symbol
+    }
 }
 
 // MARK: - Tolerant decoding

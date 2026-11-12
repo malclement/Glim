@@ -293,6 +293,8 @@ public final class MonitorManager {
                 Log.audio.notice("\(reason, privacy: .public)")
                 events.record("audio", reason)
             }
+            let reason: Monitor.AudioUnattachedReason? = unambiguous ? nil : (candidates.isEmpty ? .noDevice : .ambiguous)
+            if monitor.audioUnattachedReason != reason { monitor.audioUnattachedReason = reason }
             monitor.attachAudio(unambiguous ? candidates.first : nil, make: platform.makeAudioOutput)
         }
     }
