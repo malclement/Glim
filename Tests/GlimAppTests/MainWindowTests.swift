@@ -240,7 +240,10 @@ import Testing
         let brightness = try #require(monitor.brightness)
         brightness.setEditing(true)
         simulated.update { $0.silent = true }
+        // One lost read is not enough; a pass with no answer is.
         await monitor.contrast?.refresh()
+        #expect(monitor.status == .ready)
+        await monitor.refresh()
         #expect(monitor.status == .notResponding)
         #expect(OffscreenRenderer.spin(until: { !brightness.isEditing }))
     }

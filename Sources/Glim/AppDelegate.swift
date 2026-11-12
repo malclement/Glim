@@ -77,10 +77,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // catches up with the light at once.
         observe(workspace, NSWorkspace.screensDidSleepNotification) { [weak self] _ in self?.adaptive.setSuspended(true) }
         observe(workspace, NSWorkspace.screensDidWakeNotification) { [weak self] _ in self?.adaptive.setSuspended(false) }
-        // After a sleep the display transport is often recreated; give it a
-        // moment, then look again.
-        observe(workspace, NSWorkspace.didWakeNotification) { $0.scheduleRescan(after: .seconds(2)) }
-        observe(workspace, NSWorkspace.screensDidWakeNotification) { $0.scheduleRescan(after: .seconds(2)) }
+        // After a sleep the display transport is often recreated, and a
+        // monitor can come back with other values than it slept with: look
+        // again after a moment, then read everything again.
+        observe(workspace, NSWorkspace.didWakeNotification) { $0.displaysDidWake() }
+        observe(workspace, NSWorkspace.screensDidWakeNotification) { $0.displaysDidWake() }
         // Fires when a display is connected, disconnected or reconfigured. The
         // IOKit notifications inside the manager usually get there first.
         observe(.default, NSApplication.didChangeScreenParametersNotification) { $0.scheduleRescan() }
