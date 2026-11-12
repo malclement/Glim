@@ -50,9 +50,13 @@ public struct ControlFailure: Equatable, Sendable {
     public var message: String
     /// Whether retrying might help.
     public var isTransient: Bool
+    /// What the message leaves out, for diagnostics: for example
+    /// "readFailed 0xE00002C7". Not shown in the UI.
+    public var detail: String?
 
     init(_ error: any Error) {
         message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+        detail = (error as? DDCError)?.technicalDetail ?? String(describing: error)
         switch error {
         case let error as DDCError: isTransient = error.isTransient
         case AudioError.notSupported: isTransient = false

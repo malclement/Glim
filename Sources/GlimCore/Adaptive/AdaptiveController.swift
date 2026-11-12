@@ -348,7 +348,7 @@ public final class AdaptiveController {
         case .schedule:
             if period == .day { new.schedule.dayBrightness = brightness } else { new.schedule.nightBrightness = brightness }
         }
-        Log.state.info("learned \(String(format: "%.2f", brightness)) at \(String(describing: reading)) for \(source.rawValue, privacy: .public)")
+        Log.state.info("learned \(String(format: "%.2f", brightness), privacy: .public) at \(String(describing: reading), privacy: .public) for \(source.rawValue, privacy: .public)")
         settings[monitorID] = new
         save(settings)
     }

@@ -17,8 +17,15 @@ public final class MonitorManager {
     public private(set) var availability: Availability = .available
     /// True until the first scan has finished.
     public private(set) var isDiscovering = true
+    /// Non-nil when DDC/CI is available and the last scan found no external
+    /// display, yet the registry shows something that looks like one: a
+    /// display is connected but Glim cannot use it, typically because a macOS
+    /// release changed the registry. For the UI to explain an empty list.
+    public private(set) var discoveryHint: String?
+    /// Recent rare events, for the diagnostics report.
+    public let events: EventLog
 
-    @ObservationIgnored private let platform: any MonitorPlatform
+    @ObservationIgnored let platform: any MonitorPlatform
     /// One channel per transport. Every monitor object on a transport, the
     /// current one and any it replaced that may still be finishing, shares
     /// it, so all traffic on that I2C bus is serialised in one place.
@@ -29,12 +36,14 @@ public final class MonitorManager {
     @ObservationIgnored private var rescanRequested = false
     @ObservationIgnored private var identityRetries = 0
     @ObservationIgnored private var started = false
+    @ObservationIgnored private var lastDiscoveryCount: Int?
     /// Bumped by each audio association, so an older one that finishes late
     /// cannot undo a newer one.
     @ObservationIgnored private var audioGeneration = 0
 
-    public init(platform: any MonitorPlatform = LivePlatform()) {
+    public init(platform: any MonitorPlatform = LivePlatform(), events: EventLog = EventLog()) {
         self.platform = platform
+        self.events = events
     }
 
     // MARK: Lifecycle
@@ -45,9 +54,10 @@ public final class MonitorManager {
         isDiscovering = true
         identityRetries = 0
         guard platform.isDDCAvailable else {
-            availability = .unavailable("Glim needs a Mac with Apple silicon. This Mac doesn't provide the DDC/CI interface Glim uses.")
+            availability = .unavailable(Self.unavailableMessage())
             isDiscovering = false
             Log.discovery.fault("IOAVService is unavailable; DDC/CI disabled")
+            events.record("discovery", "DDC/CI unavailable: IOAVService interface missing")
             return
         }
         availability = .available
@@ -56,6 +66,22 @@ public final class MonitorManager {
             self?.scheduleRescan()
         }
         scheduleRescan(after: .zero)
+    }
+
+    /// Why DDC/CI is unavailable. On Apple silicon the cause is a macOS
+    /// release that no longer has the interface, not the hardware.
+    nonisolated static func unavailableMessage(isAppleSilicon: Bool = MonitorManager.isAppleSilicon) -> String {
+        isAppleSilicon
+            ? "This version of macOS no longer provides the interface Glim uses to talk to displays. Check for a Glim update."
+            : "Glim needs a Mac with Apple silicon. This Mac doesn't provide the DDC/CI interface Glim uses."
+    }
+
+    nonisolated static var isAppleSilicon: Bool {
+        #if arch(arm64)
+        true
+        #else
+        false
+        #endif
     }
 
     /// Stops observing and releases every monitor.
@@ -67,6 +93,7 @@ public final class MonitorManager {
         monitors.forEach { $0.invalidate() }
         monitors = []
         channels.removeAll()
+        lastDiscoveryCount = nil
         started = false
     }
 
@@ -102,6 +129,7 @@ public final class MonitorManager {
             let displays = await platform.discoverDisplays()
             guard started else { return }
             apply(displays)
+            noteDiscovery(displays)
             await associateAudio()
             // A framebuffer's EDID can be published a moment after its
             // transport. Look again shortly rather than show a nameless display.
@@ -113,24 +141,49 @@ public final class MonitorManager {
         isDiscovering = false
     }
 
+    /// Logs and records a change in how many displays the scan found, and
+    /// updates ``discoveryHint``.
+    private func noteDiscovery(_ displays: [DiscoveredDisplay]) {
+        if lastDiscoveryCount != displays.count {
+            Log.discovery.notice("scan found \(displays.count) external display(s)")
+            events.record("discovery", "scan found \(displays.count) external display(s)")
+            lastDiscoveryCount = displays.count
+        }
+        var hint: String?
+        if displays.isEmpty {
+            let summary = platform.transportSummary
+            if summary.suggestsUnusableDisplay {
+                hint = "A display is connected, but Glim can't reach it on this version of macOS."
+                if discoveryHint == nil { events.record("discovery", "registry shows a display Glim cannot use") }
+            }
+        }
+        // Observation re-renders on every assignment, even of an equal value.
+        if discoveryHint != hint { discoveryHint = hint }
+    }
+
     private func apply(_ displays: [DiscoveredDisplay]) {
         let keys = Self.monitorKeys(for: displays)
         var next: [Monitor] = []
         for (display, key) in zip(displays, keys) {
             if let existing = monitors.first(where: { $0.id == key }) {
                 if existing.display.serviceID != display.serviceID {
+                    events.record("state", "\(existing.name) reconnected")
                     existing.reconnect(to: display, device: channel(for: display))
                 }
                 next.append(existing)
             } else {
-                Log.discovery.info("monitor connected: \(display.identity?.productName ?? "unidentified", privacy: .public)")
-                let monitor = Monitor(id: key, display: display, device: channel(for: display), timing: platform.controlTiming)
+                let label = display.identity?.productName ?? "unidentified display"
+                Log.discovery.notice("monitor connected: \(label, privacy: .public)")
+                events.record("discovery", "monitor connected: \(label)")
+                let monitor = Monitor(id: key, display: display, device: channel(for: display), timing: platform.controlTiming,
+                                      events: events)
                 monitor.start()
                 next.append(monitor)
             }
         }
         for monitor in monitors where !next.contains(where: { $0 === monitor }) {
-            Log.discovery.info("monitor gone: \(monitor.name, privacy: .public)")
+            Log.discovery.notice("monitor gone: \(monitor.name, privacy: .public)")
+            events.record("discovery", "monitor gone: \(monitor.name)")
             monitor.invalidate()
         }
         monitors = next
@@ -187,7 +240,9 @@ public final class MonitorManager {
             let sameModel = wanting.filter { $0.profile.volume == monitor.profile.volume }
             let unambiguous = candidates.count == 1 && sameModel.count == 1 && !unidentified
             if !unambiguous, !candidates.isEmpty {
-                Log.audio.notice("\(candidates.count) audio device(s) for \(sameModel.count) \(prefix, privacy: .public) monitor(s)\(unidentified ? " and an unidentified display" : ""); not guessing")
+                let reason = "\(candidates.count) audio device(s) for \(sameModel.count) \(prefix) monitor(s)\(unidentified ? " and an unidentified display" : ""); not guessing"
+                Log.audio.notice("\(reason, privacy: .public)")
+                events.record("audio", reason)
             }
             monitor.attachAudio(unambiguous ? candidates.first : nil, make: platform.makeAudioOutput)
         }
