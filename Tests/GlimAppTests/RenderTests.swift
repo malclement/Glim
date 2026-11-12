@@ -125,9 +125,23 @@ enum Situation: String, CaseIterable, Sendable {
         try snapshot(SettingsView().defaultAppStorage(defaults.store), "settings-general-no-menu-bar-icon", width: 460)
     }
 
+    /// The login item in the states that need words: waiting for approval,
+    /// and not found, from a disk image.
+    @Test func settingsPaneLoginStates() throws {
+        let defaults = try TestDefaults("settings-login")
+        let approval = LaunchAtLogin(service: ScriptedLoginItem(.requiresApproval), bundlePath: "/Applications/Glim.app", events: EventLog())
+        try snapshot(GeneralPaneHarness(login: approval).defaultAppStorage(defaults.store), "settings-general-login-approval", width: 460)
+        let notFound = LaunchAtLogin(service: ScriptedLoginItem(.notFound), bundlePath: "/Volumes/Glim/Glim.app", events: EventLog())
+        try snapshot(GeneralPaneHarness(login: notFound).defaultAppStorage(defaults.store), "settings-general-login-not-found", width: 460)
+    }
+
     @Test func diagnosticsLeaveOutTheSerial() async throws {
         let setup = try await Setup.make(.hp)
         let report = setup.manager.diagnosticsReport(appVersion: "test")
+        // The transport and the recent events are in it, and serial-free too.
+        #expect(report.contains("DCPAVServiceProxy entries:"))
+        #expect(report.contains("Recent events"))
+        #expect(!setup.manager.events.entries.contains { $0.message.contains("TEST0000001") })
         #expect(report.contains("HP E27m G4"))
         #expect(report.contains("profile: hp-e27m-g4 (tested; untested: colorPreset, colorTemperature, input)"))
         #expect(report.contains("serial present"))
@@ -439,6 +453,13 @@ final class TestDefaults {
 
 /// TabView only builds its selected tab, so the other panes are rendered on
 /// their own.
+private struct GeneralPaneHarness: View {
+    let login: LaunchAtLogin
+    var body: some View {
+        TabView { GeneralSettingsView(login: login).tabItem { Label("General", systemImage: "gearshape") } }
+    }
+}
+
 private struct AboutPaneHarness: View {
     var body: some View {
         TabView { AboutView().tabItem { Label("About", systemImage: "info.circle") } }
