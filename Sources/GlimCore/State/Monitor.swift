@@ -40,6 +40,17 @@ public final class Monitor: Identifiable {
     public private(set) var capabilitiesString: String?
     /// The audio device the volume controls drive, when it is a USB device.
     public private(set) var audioDeviceName: String?
+    /// Why a monitor whose speakers are a USB Audio device has no volume
+    /// control, or nil while it has one (or its volume is not USB audio).
+    public internal(set) var audioUnattachedReason: AudioUnattachedReason?
+
+    public enum AudioUnattachedReason: Equatable, Sendable {
+        /// No USB Audio device carries this monitor's name.
+        case noDevice
+        /// There are devices, but nothing says which is this monitor's: two
+        /// monitors of one model, an unidentified display or several devices.
+        case ambiguous
+    }
 
     @ObservationIgnored private(set) var display: DiscoveredDisplay
     @ObservationIgnored private var device: any DDCDevice

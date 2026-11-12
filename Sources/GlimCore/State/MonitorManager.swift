@@ -189,6 +189,8 @@ public final class MonitorManager {
             if !unambiguous, !candidates.isEmpty {
                 Log.audio.notice("\(candidates.count) audio device(s) for \(sameModel.count) \(prefix, privacy: .public) monitor(s)\(unidentified ? " and an unidentified display" : ""); not guessing")
             }
+            let reason: Monitor.AudioUnattachedReason? = unambiguous ? nil : (candidates.isEmpty ? .noDevice : .ambiguous)
+            if monitor.audioUnattachedReason != reason { monitor.audioUnattachedReason = reason }
             monitor.attachAudio(unambiguous ? candidates.first : nil, make: platform.makeAudioOutput)
         }
     }
