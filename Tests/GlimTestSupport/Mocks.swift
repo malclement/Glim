@@ -88,6 +88,11 @@ package final class FakePlatform: MonitorPlatform {
         package var devices: [UInt64: any DDCDevice] = [:]
         package var discoveries = 0
         package var devicesMade = 0
+        package var transport = TransportSummary(
+            symbols: ["IOAVServiceCreateWithService", "IOAVServiceReadI2C", "IOAVServiceWriteI2C"].map {
+                SymbolStatus(name: $0, resolved: true)
+            }
+        )
     }
 
     package let state = OSAllocatedUnfairLock(initialState: State())
@@ -97,6 +102,12 @@ package final class FakePlatform: MonitorPlatform {
     package var isDDCAvailable: Bool { state.withLock(\.available) }
 
     package var controlTiming: ControlTiming { ControlTiming(settleDelay: .zero, operationTimeout: .seconds(5)) }
+
+    /// What the registry shows; set it to script a Mac.
+    package var transportSummary: TransportSummary {
+        get { state.withLock(\.transport) }
+        set { state.withLock { $0.transport = newValue } }
+    }
 
     /// Connects a display. It appears at the next rescan.
     @discardableResult

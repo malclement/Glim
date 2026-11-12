@@ -53,7 +53,75 @@ struct ColorMeasurement: CustomTestStringConvertible, Sendable {
     @Test func theFixtureHasEveryMeasurement() throws {
         let rows = try ColorMeasurement.all()
         #expect(rows.filter { $0.code == 0x14 }.map(\.value) == Array(1...13))
-        #expect(rows.filter { $0.code == 0x0C }.count == 4)
+        #expect(rows.filter { $0.code == 0x0C }.count == 9)
+    }
+
+    /// `hp-e27m-g4-color-sequences.txt`: several writes in a row, measured
+    /// on the hardware, where the outcome depends on what came before.
+    private func measuredSequences() throws -> [(sets: [(UInt8, UInt16)], preset: UInt16, temperature: UInt16)] {
+        try Fixtures.text("hp-e27m-g4-color-sequences").split(separator: "\n").compactMap { line in
+            guard !line.hasPrefix("#") else { return nil }
+            let pairs = try line.split(separator: " ").map { token -> (UInt8, UInt16) in
+                let parts = token.split(separator: "=")
+                guard parts.count == 2, let code = UInt8(parts[0], radix: 16), let value = UInt16(parts[1]) else {
+                    throw FixtureError.missing(String(line))
+                }
+                return (code, value)
+            }
+            guard pairs.count >= 3 else { throw FixtureError.missing(String(line)) }
+            let reads = pairs.suffix(2)
+            guard reads.first?.0 == 0x14, reads.last?.0 == 0x0C else { throw FixtureError.missing(String(line)) }
+            return (Array(pairs.dropLast(2)), reads.first?.1 ?? 0, reads.last?.1 ?? 0)
+        }
+    }
+
+    /// The simulator has the HP's custom temperature state: every sequence
+    /// measured on the hardware reads back the same from it.
+    @Test func theSimulatorMatchesTheMeasuredSequences() async throws {
+        let sequences = try measuredSequences()
+        #expect(sequences.count == 15)
+        for sequence in sequences {
+            let display = SimulatedDisplay.hp()
+            let channel = DDCChannel.simulated(display)
+            for (code, value) in sequence.sets { try await channel.write(VCPCode(code), value: value) }
+            let preset = try await channel.read(.colorPreset).current
+            let temperature = try await channel.read(.colorTemperature).current
+            #expect(preset == sequence.preset && temperature == sequence.temperature,
+                    "\(sequence.sets) read (\(preset), \(temperature))")
+        }
+    }
+
+    /// The regression the hardware found: after a temperature set by hand,
+    /// 0x14 alone no longer moves 0x0C, so every pick is checked and the
+    /// temperature put on a preset's own value.
+    @Test(arguments: [UInt16(0x01), 0x02, 0x04, 0x05, 0x08])
+    func aPresetPickedFromACustomTemperatureIsRecognized(preset: UInt16) async throws {
+        let (monitor, display, manager) = try await readyHP()
+        let selector = try #require(monitor.colorPreset)
+        monitor.colorTemperature?.set(55)
+        #expect(await eventually { selector.currentName == "Custom" })
+        #expect(await settled(monitor))
+        let option = try #require(selector.options.first { $0.value == preset })
+        selector.select(option)
+        #expect(await eventually { selector.current == option && selector.isWriting == false })
+        #expect(await settled(monitor))
+        #expect(display.value(0x14) == option.reading && display.value(0x0C) == option.temperature)
+        // The slider follows once it is read again after the pick settles.
+        #expect(await eventually { Double(option.temperature ?? 0) == monitor.colorTemperature?.value })
+        manager.stop()
+    }
+
+    /// From a clean state a pick is one write: nothing extra is sent.
+    @Test func aPresetPickedFromAPresetIsOneWrite() async throws {
+        let (monitor, display, manager) = try await readyHP()
+        let selector = try #require(monitor.colorPreset)
+        selector.select(try #require(selector.options.first { $0.value == 0x01 }))
+        #expect(await eventually { selector.current?.value == 0x01 && selector.isWriting == false })
+        selector.select(try #require(selector.options.first { $0.value == 0x08 }))
+        #expect(await eventually { selector.current?.value == 0x08 && selector.isWriting == false })
+        #expect(await settled(monitor))
+        #expect(sets(display) == ["14=1", "14=8"])
+        manager.stop()
     }
 
     /// Every 0x14 write measured on the HP is recognized as the preset it
@@ -81,7 +149,9 @@ struct ColorMeasurement: CustomTestStringConvertible, Sendable {
         let names = try ColorMeasurement.all().filter { $0.code == 0x0C }.map { row in
             presets.name(of: presets.value(reading: row.preset, temperature: row.value))
         }
-        #expect(names == ["Custom RGB", "5000 K", "Custom", "Custom"])
+        // 0, 40, 55, 100, then the bucket edges 1, 41, 70, 71, 126.
+        #expect(names == ["Custom RGB", "5000 K", "Custom", "Custom",
+                          "Custom", "Custom", "6500 K (factory)", "Custom", "9300 K"])
     }
 
     @Test func theHPOffersTheUnderstoodPresetsWithTheFactoryOne() {
@@ -173,22 +243,34 @@ struct ColorMeasurement: CustomTestStringConvertible, Sendable {
 
     /// From a preset without a temperature, the slider first brings back a
     /// preset that has one, then sets the temperature.
-    @Test func theSliderLeavesSRGBThroughAKelvinPreset() async throws {
+    @Test func theSliderLeavesSRGBByItselfOnTheHP() async throws {
         let (monitor, display, manager) = try await readyHP()
         let srgb = try #require(monitor.colorPreset?.options.first { $0.value == 0x01 })
         monitor.colorPreset?.select(srgb)
         #expect(await eventually { monitor.colorTemperature?.value == 0 && monitor.colorPreset?.isWriting == false })
+        #expect(await settled(monitor))
         display.update { $0.frames = [] }
 
+        // A lone 0x0C write leaves sRGB on the HP: no preset goes first.
         monitor.colorTemperature?.set(40)
         #expect(await eventually { monitor.colorPreset?.current?.name == "5000 K" })
-        #expect(sets(display) == ["14=5", "0C=40"])
-        // Only the first write needs it.
-        monitor.colorTemperature?.set(100)
-        #expect(await eventually { display.value(0x0C) == 100 })
         #expect(await settled(monitor))
-        #expect(sets(display) == ["14=5", "0C=40", "0C=100"])
+        #expect(sets(display) == ["0C=40"])
         manager.stop()
+    }
+
+    /// A monitor whose profile names a Kelvin preset gets it written before
+    /// the first temperature, while 0x0C reads 0.
+    @Test func aTemperatureFromNoTemperatureGoesThroughTheKelvinPreset() async throws {
+        let display = SimulatedDisplay.hp()
+        display.update { $0.values[0x0C]?.current = 0; $0.values[0x14]?.current = 1 }
+        let device = DDCChannel.simulated(display)
+        let backend = ControlBackend<Double>.colorTemperature(
+            on: device, scale: ColorTemperatureScale(increment: 50, kelvinPreset: 0x05))
+        _ = try await backend.read()
+        try await backend.write(40)
+        try await backend.write(100)
+        #expect(sets(display) == ["14=5", "0C=40", "0C=100"])
     }
 
     /// The issue's acceptance: sRGB, then 6500 K, is the factory state.

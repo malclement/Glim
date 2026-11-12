@@ -46,9 +46,22 @@ import Testing
         #expect(controller.prepareWindow() === log.windows.first)
     }
 
+    /// The window is named after the display it shows, with the display's
+    /// state under it, and follows the sidebar.
+    @Test func theWindowIsNamedAfterWhatItShows() async throws {
+        let (setup, monitor, simulated) = try await Setup.readyHP()
+        let window = MainWindowController(manager: setup.manager, present: { _ in }).prepareWindow()
+        #expect(OffscreenRenderer.spin(until: { window.title == "HP E27m G4" && window.subtitle == "Connected" }),
+                "title \(window.title), subtitle \(window.subtitle)")
+        simulated.update { $0.silent = true }
+        await monitor.refresh()
+        #expect(OffscreenRenderer.spin(until: { window.subtitle == "Not responding" }))
+    }
+
     @Test func theWindowIsOneMacOSDoesNotBringBackByItself() {
         let controller = MainWindowController(manager: MonitorManager(platform: FakePlatform()))
         let window = controller.prepareWindow()
+        // With no display to show, the window is named after the app.
         #expect(window.title == "Glim")
         #expect(!window.isRestorable)
         #expect(!window.isReleasedWhenClosed)
@@ -240,7 +253,10 @@ import Testing
         let brightness = try #require(monitor.brightness)
         brightness.setEditing(true)
         simulated.update { $0.silent = true }
+        // One lost read is not enough; a pass with no answer is.
         await monitor.contrast?.refresh()
+        #expect(monitor.status == .ready)
+        await monitor.refresh()
         #expect(monitor.status == .notResponding)
         #expect(OffscreenRenderer.spin(until: { !brightness.isEditing }))
     }
@@ -360,7 +376,7 @@ import Testing
     // MARK: Wording
 
     @Test func theProfileSaysWhichControlsWereNotTested() {
-        #expect(MonitorText.profile(.hpE27mG4) == "Tested with Glim, except color temperature, color presets and input switching")
+        #expect(MonitorText.profile(.hpE27mG4) == "Tested with Glim, except input switching")
         var profile = MonitorProfile.hpE27mG4
         profile.untested = []
         #expect(MonitorText.profile(profile) == "Tested with Glim")

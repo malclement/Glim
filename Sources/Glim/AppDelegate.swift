@@ -24,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
 
     override convenience init() {
-        self.init(manager: MonitorManager(), defaults: .standard, frameAutosaveName: "MainWindow",
+        self.init(manager: MonitorManager(events: .shared), defaults: .standard, frameAutosaveName: "MainWindow",
                   present: MainWindowController.bringForward)
     }
 
@@ -77,10 +77,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // catches up with the light at once.
         observe(workspace, NSWorkspace.screensDidSleepNotification) { [weak self] _ in self?.adaptive.setSuspended(true) }
         observe(workspace, NSWorkspace.screensDidWakeNotification) { [weak self] _ in self?.adaptive.setSuspended(false) }
-        // After a sleep the display transport is often recreated; give it a
-        // moment, then look again.
-        observe(workspace, NSWorkspace.didWakeNotification) { $0.scheduleRescan(after: .seconds(2)) }
-        observe(workspace, NSWorkspace.screensDidWakeNotification) { $0.scheduleRescan(after: .seconds(2)) }
+        // After a sleep the display transport is often recreated, and a
+        // monitor can come back with other values than it slept with: look
+        // again after a moment, then read everything again.
+        observe(workspace, NSWorkspace.didWakeNotification) { $0.displaysDidWake() }
+        observe(workspace, NSWorkspace.screensDidWakeNotification) { $0.displaysDidWake() }
         // Fires when a display is connected, disconnected or reconfigured. The
         // IOKit notifications inside the manager usually get there first.
         observe(.default, NSApplication.didChangeScreenParametersNotification) { $0.scheduleRescan() }
@@ -90,11 +91,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Opening Glim from Finder, Spotlight or Launchpad shows its window;
     /// macOS starting it at login leaves it in the menu bar.
     func showWindowUnlessLoginItem(_ launchEvent: NSAppleEventDescriptor?) {
-        guard !Self.isLoginItemLaunch(launchEvent) else {
-            AppLog.app.info("started at login; the window stays closed")
+        let atLogin = Self.isLoginItemLaunch(launchEvent)
+        LaunchInfo.launchedAtLogin = atLogin
+        let eventClass = launchEvent.map { Self.fourCharacters($0.eventClass) } ?? "nil"
+        let eventID = launchEvent.map { Self.fourCharacters($0.eventID) } ?? "nil"
+        AppLog.app.notice("launch: event \(eventClass, privacy: .public)/\(eventID, privacy: .public), at login \(atLogin ? "yes" : "no", privacy: .public)")
+        manager.events.record("app", "launch: Glim \(AppInfo.versionString), \(ProcessInfo.processInfo.operatingSystemVersionString), "
+            + "event \(eventClass)/\(eventID), at login \(atLogin ? "yes" : "no")")
+        guard !atLogin else {
+            AppLog.app.notice("started at login; the window stays closed")
             return
         }
         mainWindow.show()
+    }
+
+    /// An Apple event's class or ID as the four characters it spells
+    /// ("aevt", "oapp").
+    nonisolated static func fourCharacters(_ code: FourCharCode) -> String {
+        let bytes = [24, 16, 8, 0].map { UInt8(truncatingIfNeeded: code >> UInt32($0)) }
+        let text = String(decoding: bytes, as: UTF8.self)
+        return bytes.allSatisfy { $0 >= 0x20 && $0 < 0x7F } ? text : String(code, radix: 16)
     }
 
     /// Whether `event`, the launch's open-application event, says macOS

@@ -88,7 +88,7 @@ public enum DisplayRegistry {
             proxies.append(Proxy(serviceID: registryID(of: proxy), pipe: pipe))
         }
         let displays = pair(proxies, with: externalFramebuffers())
-        Log.discovery.info("found \(displays.count) external DDC display(s)")
+        Log.discovery.debug("found \(displays.count) external DDC display(s)")
         return displays
     }
 
@@ -132,6 +132,22 @@ public enum DisplayRegistry {
     /// panel's pipe (`disp0`) is left out.
     static func externalFramebuffers() -> [String: DisplayIdentity?] {
         var result: [String: DisplayIdentity?] = [:]
+        for entry in framebufferEntries() where entry.isExternal {
+            result[entry.pipe] = entry.identity
+        }
+        return result
+    }
+
+    /// One framebuffer as the registry shows it.
+    struct FramebufferEntry {
+        var pipe: String
+        var isExternal: Bool
+        var identity: DisplayIdentity?
+    }
+
+    /// Every framebuffer, built-in and external.
+    static func framebufferEntries() -> [FramebufferEntry] {
+        var result: [FramebufferEntry] = []
         var seen = Set<UInt64>()
         // IOMobileFramebuffer matches its subclasses: IOMobileFramebufferShim
         // on current macOS, AppleCLCD2 on older releases.
@@ -143,13 +159,31 @@ public enum DisplayRegistry {
                 // one changing in a future release is not enough to let the
                 // built-in panel in.
                 let flagged = (property("external", of: framebuffer) as? NSNumber)?.boolValue == true
-                guard flagged || pipe.hasPrefix("dispext") else { return }
                 let attributes = property("DisplayAttributes", of: framebuffer) as? [String: Any]
                 let product = attributes?["ProductAttributes"] as? [String: Any]
-                result[pipe] = product.flatMap(identity(from:))
+                result.append(FramebufferEntry(pipe: pipe, isExternal: flagged || pipe.hasPrefix("dispext"),
+                                               identity: product.flatMap(identity(from:))))
             }
         }
         return result
+    }
+
+    /// What the registry shows, for diagnostics: every `DCPAVServiceProxy`
+    /// (whatever its `Location`) and every framebuffer. Reads properties only.
+    public static func transportSummary() -> TransportSummary {
+        var proxies: [TransportSummary.Proxy] = []
+        forEachService(matching: "DCPAVServiceProxy") { proxy in
+            proxies.append(.init(location: property("Location", of: proxy) as? String, parent: parentName(of: proxy)))
+        }
+        let framebuffers = framebufferEntries().map {
+            TransportSummary.Framebuffer(pipe: $0.pipe, isExternal: $0.isExternal, identity: $0.identity.map(describe))
+        }
+        return TransportSummary(symbols: IOAVServiceAPI.symbolResolution(), proxies: proxies, framebuffers: framebuffers)
+    }
+
+    /// Manufacturer code and product ID only; never a serial.
+    private static func describe(_ identity: DisplayIdentity) -> String {
+        "\(identity.manufacturerCode) \(String(identity.productID, radix: 16, uppercase: true).leftPadded(to: 4))"
     }
 
     static func identity(from product: [String: Any]) -> DisplayIdentity? {
@@ -211,5 +245,75 @@ public enum DisplayRegistry {
         guard IORegistryEntryGetName(entry, &buffer) == KERN_SUCCESS else { return nil }
         let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
         return String(decoding: bytes, as: UTF8.self)
+    }
+}
+
+/// What the IORegistry and IOKit show about display transports, reduced to
+/// what a bug report needs to say why Glim found nothing. Holds no serial
+/// numbers: a display is identified by manufacturer code and product ID.
+public struct TransportSummary: Equatable, Sendable {
+    public struct Proxy: Equatable, Sendable {
+        public var location: String?
+        public var parent: String?
+        public init(location: String?, parent: String?) {
+            self.location = location
+            self.parent = parent
+        }
+    }
+
+    public struct Framebuffer: Equatable, Sendable {
+        public var pipe: String
+        public var isExternal: Bool
+        /// "HPN 3753" when the framebuffer publishes an EDID, else nil.
+        public var identity: String?
+        public init(pipe: String, isExternal: Bool, identity: String?) {
+            self.pipe = pipe
+            self.isExternal = isExternal
+            self.identity = identity
+        }
+    }
+
+    public var symbols: [SymbolStatus]
+    public var proxies: [Proxy]
+    public var framebuffers: [Framebuffer]
+
+    public init(symbols: [SymbolStatus] = [], proxies: [Proxy] = [], framebuffers: [Framebuffer] = []) {
+        self.symbols = symbols
+        self.proxies = proxies
+        self.framebuffers = framebuffers
+    }
+
+    public var externalFramebufferCount: Int { framebuffers.filter(\.isExternal).count }
+    public var builtInFramebufferCount: Int { framebuffers.count - externalFramebufferCount }
+
+    /// Whether the registry shows something that looks like an external
+    /// display: an external framebuffer, or a transport proxy whose
+    /// `Location` is neither "External" nor "Embedded". Glim finds a display
+    /// through a proxy located "External", so when its scan found nothing and
+    /// this is true, a macOS release probably changed the registry's layout.
+    public var suggestsUnusableDisplay: Bool {
+        externalFramebufferCount > 0 || proxies.contains {
+            guard let location = $0.location?.lowercased() else { return false }
+            return location != "external" && location != "embedded"
+        }
+    }
+
+    /// The lines of the diagnostics report.
+    public var lines: [String] {
+        var lines: [String] = []
+        if symbols.isEmpty {
+            lines.append("IOAVService symbols: not checked")
+        } else {
+            lines.append("IOAVService symbols: " + symbols.map { "\($0.name) \($0.resolved ? "ok" : "MISSING")" }.joined(separator: ", "))
+        }
+        lines.append("DCPAVServiceProxy entries: \(proxies.count)")
+        for proxy in proxies {
+            lines.append("  Location=\(proxy.location ?? "?"), parent \(proxy.parent ?? "?")")
+        }
+        lines.append("Framebuffers: \(externalFramebufferCount) external, \(builtInFramebufferCount) built-in")
+        for buffer in framebuffers where buffer.isExternal {
+            lines.append("  \(buffer.pipe): EDID \(buffer.identity ?? "absent")")
+        }
+        return lines
     }
 }

@@ -2,6 +2,8 @@
 
 The owner deferred these on 2026-11-04. Each needs either a risky write or someone at the monitor.
 
+[hardware-session.md](hardware-session.md) is the scripted pass through all of them, in order of risk. What could be done without anyone at the monitor was done on 2026-11-12: [`data/safe-probes-2026-11-12.md`](../data/safe-probes-2026-11-12.md).
+
 ## Risky writes (need the owner's OK, with a physical fallback ready)
 
 | Item | Why it matters | Risk | Fallback |
@@ -18,7 +20,8 @@ The owner deferred these on 2026-11-04. Each needs either a risky write or someo
 
 - [ ] **Watch the screen during each write.** Record what 0x2E, each 0x14 preset value (06/07/0A/0C/0D in particular), 0x86, 0x87 and the black levels look like.
 - [ ] **Map 0x14 read values to OSD names.** Cycle the presets through DDC while the OSD Color menu is open. Candidates: Warm, Neutral, Cool, Native, sRGB, Low Blue Light, Reading, Night, HP Enhance+, Custom RGB. Until then the app offers only sRGB, native, 5000 K, 6500 K and 9300 K, the presets the read-backs pin down; 03, 06/07, 0A and the user presets would join once someone has seen them.
-- [ ] **Color in the app.** With the monitor at 6500 K, run `make hardware-test`, then drop `.colorTemperature` and `.colorPreset` from the HP profile's `untested`. Also look at the slider from sRGB: Glim selects 6500 K before the first 0x0C write, which may flash briefly.
+- [ ] **Color, by eye.** ✅ The app's color controls pass `make hardware-test` (2026-11-12, read-backs): a pick is checked against 0x0C, which gets the monitor out of the custom temperature state the first run found ([`data/safe-probes-2026-11-12.md`](../data/safe-probes-2026-11-12.md)). Still for someone at the monitor: what the screen shows at, say, 0x14 = 1 with 0x0C = 55, and whether picking sRGB from a custom temperature visibly passes through 6500 K.
+- [ ] **0x0C stuck at 70.** At the start of that session 0x0C read 70 under every preset until the first 0x0C write. Power-cycle the monitor, then read `glim get 0C` under sRGB (`glim set 14 1`) to see whether a power cycle is what does it.
 - [ ] **Automatic brightness on the hardware** (issue #4's acceptance). ✅ On an AOC U34G2G4R3, 2026-11-09, it set 55% at 19 lux, the curve's value, and idled at 0.03% CPU with it on and the window open. Still to do: dim the room and time how long the display takes to follow (target: about 10 s, no visible stepping); move the slider and check it holds and is learned; close the lid and check the schedule takes over.
 - [ ] **RGB gains (0x16/0x18/0x1A).** Decide whether to offer them. Any gain write switches the preset to Custom RGB, and only `0x14 ← 05` switches it back.
 - [ ] **Watch 0x02 / 0x52 (new-control-value / active-control).** Change a setting with the buttons, then run `glim get 02` and `glim get 52`. If 0x02 reads 2 and 0x52 names the changed code, a host can follow OSD changes.
@@ -26,9 +29,8 @@ The owner deferred these on 2026-11-04. Each needs either a risky write or someo
 - [ ] **Front-panel keys.** Press mic-mute and re-run `tools/macos-probe/audioprobe HP` to see whether input mute flips in hardware. Press volume +/- and check whether the MacBook speakers or the HP's USB volume change.
 - [ ] **Webcam.** Pop it up, then run `system_profiler SPCameraDataType SPUSBHostDataType`, `usbdescprobe` and `camprobe`. That gives the product ID, UVC controls, formats and IR function.
 - [ ] **OSD Management menu.** Look for a DDC/CI on/off switch, a USB-C "data vs resolution" (USB 3) option and the auto-sleep timer. Note where each one lives.
+- [ ] **Scaling and sidetone, seen and heard.** 0x86 stores 02 and 05 at 1920×1200, and the sidetone volume (USB feature unit 9) can be set with `tools/macos-probe/uacprobe`; both were checked by read-back only. Someone has to look at 02 against 05, and listen to the sidetone above its −69 dB floor.
 
 ## Not yet tried
 
-- [ ] **0x86 scaling at a non-native resolution** (for example 1920×1080 from `displayplacer`). The monitor ignores 0x86 at native resolution.
-- [ ] **Raw UAC requests to feature unit 9** (sidetone). CoreAudio doesn't expose it.
 - [ ] **UVC GET/SET on the webcam** once it enumerates.

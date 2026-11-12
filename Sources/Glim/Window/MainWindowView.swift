@@ -12,6 +12,9 @@ struct MainWindowView: View {
     let manager: MonitorManager
     @Environment(\.glimStore) private var store
     @State private var selection: SidebarItem?
+    /// The scene waiting for the answer to "Delete?", from the sidebar or the
+    /// detail alike.
+    @State private var sceneToDelete: DisplayScene.ID?
 
     /// The selected scene, if a scene is selected and still exists.
     private var shownScene: DisplayScene? {
@@ -28,13 +31,27 @@ struct MainWindowView: View {
         return manager.monitors.first
     }
 
+    /// The window is named after what it shows, as a document window is,
+    /// with the display's state under it.
+    private var windowTitle: String {
+        if let scene = shownScene { return scene.name }
+        if let monitor = shownMonitor { return store?.title(for: monitor, in: manager) ?? manager.title(for: monitor) }
+        return "Glim"
+    }
+
+    private var windowSubtitle: String {
+        if let scene = shownScene { return scene.isActive(on: manager.monitors) ? "Active scene" : "Scene" }
+        return shownMonitor.map { MonitorText.status($0.status) } ?? ""
+    }
+
     private var shownItem: SidebarItem? {
         shownScene.map { .scene($0.id) } ?? shownMonitor.map { .monitor($0.id) }
     }
 
     var body: some View {
         NavigationSplitView {
-            SidebarList(manager: manager, selection: Binding(get: { shownItem }, set: { selection = $0 }))
+            SidebarList(manager: manager, selection: Binding(get: { shownItem }, set: { selection = $0 }),
+                        requestDelete: { sceneToDelete = $0 })
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
         } detail: {
             detail
@@ -63,6 +80,25 @@ struct MainWindowView: View {
             }
         }
         .frame(minWidth: 620, minHeight: 440)
+        .background(WindowTitle(title: windowTitle))
+        // The toolbar bridge owns the subtitle: it clears one set on the
+        // window, and takes this one.
+        .navigationSubtitle(windowSubtitle)
+        .confirmationDialog(
+            "Delete “\(store?.scene(sceneToDelete)?.name ?? "")”?",
+            isPresented: Binding(get: { sceneToDelete != nil }, set: { if !$0 { sceneToDelete = nil } })
+        ) {
+            Button("Delete Scene", role: .destructive) {
+                if let id = sceneToDelete { store?.deleteScene(id) }
+                sceneToDelete = nil
+            }
+        } message: {
+            Text("The displays keep their current settings.")
+        }
+        // ⌘N from the menu bar: show the scene it made.
+        .onReceive(NotificationCenter.default.publisher(for: .glimDidAddScene)) { note in
+            if let id = note.object as? DisplayScene.ID { selection = .scene(id) }
+        }
         // A switch staged on the monitor that leaves the pane, picked in the
         // sidebar or replaced by another as monitors come and go, must not be
         // waiting when it comes back. Only the input: a drag in the menu on
@@ -76,7 +112,7 @@ struct MainWindowView: View {
     @ViewBuilder
     private var detail: some View {
         if let scene = shownScene, let store {
-            SceneDetailView(store: store, manager: manager, scene: scene)
+            SceneDetailView(store: store, manager: manager, scene: scene, requestDelete: { sceneToDelete = $0.id })
                 .id(scene.id)
         } else {
             monitorDetail
@@ -98,8 +134,8 @@ struct MainWindowView: View {
                 ProgressView("Looking for displays…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                NoMonitorView(manager: manager, symbol: "display", title: "No external display",
-                              message: "Connect a display over USB-C, DisplayPort or HDMI to control it from here.")
+                let text = MonitorText.noDisplay(hint: manager.discoveryHint)
+                NoMonitorView(manager: manager, symbol: text.symbol, title: text.title, message: text.message)
             }
         }
     }
@@ -115,6 +151,8 @@ enum SidebarItem: Hashable {
 private struct SidebarList: View {
     let manager: MonitorManager
     @Binding var selection: SidebarItem?
+    /// Asks to delete a scene; the window confirms.
+    let requestDelete: (DisplayScene.ID) -> Void
     @Environment(\.glimStore) private var store
 
     var body: some View {
@@ -131,12 +169,12 @@ private struct SidebarList: View {
                 Section("Scenes") {
                     if store.scenes.isEmpty {
                         // Not selectable: it has no tag.
-                        Text("None yet: save one with +")
+                        Text("None yet. Save what your displays show with the + button, then apply it from here or the menu.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .help("Save what your displays show with the + button, then apply it from here or the menu.")
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    ForEach(store.scenes) { scene in
+                    ForEach(Array(store.scenes.enumerated()), id: \.element.id) { index, scene in
                         SceneListRow(scene: scene, isActive: scene.isActive(on: manager.monitors))
                             .tag(SidebarItem.scene(scene.id))
                             .contextMenu {
@@ -145,13 +183,22 @@ private struct SidebarList: View {
                                 Button("Duplicate") {
                                     if let copy = store.duplicateScene(scene.id) { selection = .scene(copy.id) }
                                 }
+                                // Order decides ⌘1 to ⌘9, and dragging is not
+                                // the only way to change it.
+                                Button("Move Up") { store.moveScenes(from: IndexSet(integer: index), to: index - 1) }
+                                    .disabled(index == 0)
+                                Button("Move Down") { store.moveScenes(from: IndexSet(integer: index), to: index + 2) }
+                                    .disabled(index == store.scenes.count - 1)
                                 Divider()
-                                Button("Delete Scene", role: .destructive) { store.deleteScene(scene.id) }
+                                Button("Delete Scene…", role: .destructive) { requestDelete(scene.id) }
                             }
                     }
                     .onMove { store.moveScenes(from: $0, to: $1) }
                 }
             }
+        }
+        .onDeleteCommand {
+            if case .scene(let id) = selection { requestDelete(id) }
         }
     }
 }
@@ -165,6 +212,7 @@ struct SceneListRow: View {
             HStack {
                 Text(scene.name)
                     .lineLimit(1)
+                    .help(scene.name)
                 Spacer(minLength: 4)
                 if isActive {
                     Image(systemName: "checkmark")
@@ -190,6 +238,7 @@ struct MonitorListRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .lineLimit(1)
+                    .help(title)
                 Text(MonitorText.status(monitor.status))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -232,7 +281,9 @@ struct CopyDiagnosticsButton: View {
 
     var body: some View {
         Button(copied ? "Copied" : "Copy Diagnostics") {
-            let report = manager.diagnosticsReport(appVersion: AppInfo.versionString)
+            let context = DiagnosticsContext(launchedAtLogin: LaunchInfo.launchedAtLogin,
+                                             loginItemStatus: SystemLoginItem().status.rawValue)
+            let report = manager.diagnosticsReport(appVersion: AppInfo.versionString, context: context)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(report, forType: .string)
             copied = true
@@ -245,6 +296,37 @@ struct CopyDiagnosticsButton: View {
             } catch {
                 // The button went away first.
             }
+        }
+    }
+}
+
+/// Sets the title of the window the view is in. The window is AppKit's
+/// (``MainWindowController``), and a navigation title set in the detail
+/// column does not reach it.
+private struct WindowTitle: NSViewRepresentable {
+    let title: String
+
+    func makeNSView(context: Context) -> TitleView { TitleView() }
+
+    func updateNSView(_ view: TitleView, context: Context) {
+        view.title = title
+        view.apply()
+    }
+
+    final class TitleView: NSView {
+        var title = ""
+
+        /// Assigns only what changed: the title is also the window's name in
+        /// the Window menu and in Mission Control.
+        func apply() {
+            guard let window else { return }
+            if window.title != title { window.title = title }
+        }
+
+        // The first update comes before the view is in its window.
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            apply()
         }
     }
 }

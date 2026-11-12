@@ -90,10 +90,10 @@ private struct ScheduleSection: View {
             DatePicker("Night starts", selection: minuteBinding(\.nightStarts), displayedComponents: .hourAndMinute)
             if showsLevels {
                 LabeledContent("Day brightness") {
-                    PercentSlider(value: schedule.dayBrightness) { value in update { $0.dayBrightness = value } }
+                    PercentSlider(label: "Day brightness", value: schedule.dayBrightness) { value in update { $0.dayBrightness = value } }
                 }
                 LabeledContent("Night brightness") {
-                    PercentSlider(value: schedule.nightBrightness) { value in update { $0.nightBrightness = value } }
+                    PercentSlider(label: "Night brightness", value: schedule.nightBrightness) { value in update { $0.nightBrightness = value } }
                 }
             }
         }
@@ -102,9 +102,11 @@ private struct ScheduleSection: View {
     /// Minutes after midnight, as a time today.
     private func minuteBinding(_ keyPath: WritableKeyPath<DaySchedule, Int>) -> Binding<Date> {
         Binding(
-            get: { Calendar.current.startOfDay(for: Date()).addingTimeInterval(Double(schedule[keyPath: keyPath]) * 60) },
+            // By the wall clock: seconds added to midnight are an hour off on
+            // the day the clocks change.
+            get: { DaySchedule.date(atMinute: schedule[keyPath: keyPath], on: Date()) },
             set: { date in
-                let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+                let parts = Calendar.autoupdatingCurrent.dateComponents([.hour, .minute], from: date)
                 update { $0[keyPath: keyPath] = (parts.hour ?? 0) * 60 + (parts.minute ?? 0) }
             }
         )
@@ -113,6 +115,7 @@ private struct ScheduleSection: View {
 
 /// A 0–1 setting as a slider and a percentage.
 private struct PercentSlider: View {
+    let label: String
     let value: Double
     let set: (Double) -> Void
 
@@ -121,10 +124,13 @@ private struct PercentSlider: View {
             Slider(value: Binding(get: { value }, set: { set(($0 * 100).rounded() / 100) }), in: 0.05...1)
                 .controlSize(.small)
                 .frame(minWidth: 140)
+                .accessibilityLabel(label)
+                .accessibilityValue(AccessibilityText.percent(value))
             Text("\(Int((value * 100).rounded()))%")
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: LevelSlider.valueWidth, alignment: .trailing)
+                .accessibilityHidden(true)
         }
     }
 }
@@ -151,12 +157,12 @@ struct EveningWarmthSection: View {
             ))
             if settings.warmsInEvening {
                 LabeledContent("Evening") {
-                    KelvinSlider(kelvin: settings.nightKelvin, range: kelvinRange, step: Double(scale.increment)) { kelvin in
+                    KelvinSlider(label: "Evening temperature", kelvin: settings.nightKelvin, range: kelvinRange, step: Double(scale.increment)) { kelvin in
                         controller.update(monitor.id) { $0.nightKelvin = kelvin }
                     }
                 }
                 LabeledContent("Day") {
-                    KelvinSlider(kelvin: settings.dayKelvin, range: kelvinRange, step: Double(scale.increment)) { kelvin in
+                    KelvinSlider(label: "Day temperature", kelvin: settings.dayKelvin, range: kelvinRange, step: Double(scale.increment)) { kelvin in
                         controller.update(monitor.id) { $0.dayKelvin = kelvin }
                     }
                 }
@@ -165,16 +171,23 @@ struct EveningWarmthSection: View {
             Text("Evening warmth")
         } footer: {
             if settings.warmsInEvening {
-                Text("Set when the night or the day begins. A temperature you pick in between holds until the next change.")
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    // What warmth is doing right now, when it is not simply done.
+                    if let note = AdaptiveText.warmthNote(controller.warmthStatuses[monitor.id]) {
+                        Label(note, systemImage: "info.circle")
+                    }
+                    Text("Set when the night or the day begins. A temperature you pick in between holds until the next change.")
+                }
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 }
 
 private struct KelvinSlider: View {
+    let label: String
     let kelvin: Int
     let range: ClosedRange<Double>
     let step: Double
@@ -201,10 +214,13 @@ private struct KelvinSlider: View {
                    })
                 .controlSize(.small)
                 .frame(minWidth: 140)
+                .accessibilityLabel(label)
+                .accessibilityValue(AccessibilityText.kelvin(Int(dragging ?? Double(kelvin))))
             Text("\(Int(dragging ?? Double(kelvin))) K")
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: LevelSlider.valueWidth, alignment: .trailing)
+                .accessibilityHidden(true)
         }
     }
 }
@@ -218,6 +234,7 @@ struct CurveView: View {
     let reading: Double?
     /// The display's brightness now, 0 to 1.
     let brightness: Double?
+    @Environment(\.colorSchemeContrast) private var contrast
 
     private var xRange: ClosedRange<Double> {
         source == .lightSensor ? 0...BrightnessCurve.lightReading(lux: 10_000) : 0...1
@@ -239,6 +256,10 @@ struct CurveView: View {
         let curve = self.curve
         let reading = self.reading
         let brightness = self.brightness
+        let gridOpacity = ContrastStyle.gridOpacity(contrast)
+        let spoken = [AdaptiveText.curveDescription(curve, source: source),
+                      AccessibilityText.curveReading(source: source, reading: reading, brightness: brightness)]
+            .filter { !$0.isEmpty }.joined(separator: ". ")
         return VStack(spacing: 4) {
             Canvas { context, size in
                 let span = xRange.upperBound - xRange.lowerBound
@@ -255,7 +276,7 @@ struct CurveView: View {
                     grid.move(to: point(xRange.lowerBound, level))
                     grid.addLine(to: point(xRange.upperBound, level))
                 }
-                context.stroke(grid, with: .color(.secondary.opacity(0.25)), lineWidth: 0.5)
+                context.stroke(grid, with: .color(.secondary.opacity(gridOpacity)), lineWidth: 0.5)
                 // The curve.
                 var line = Path()
                 let samples = 80
@@ -290,12 +311,27 @@ struct CurveView: View {
         }
         .accessibilityElement()
         .accessibilityLabel("Brightness curve")
-        .accessibilityValue(AdaptiveText.curveDescription(curve, source: source))
+        .accessibilityValue(spoken)
     }
 }
 
 /// How the app puts automatic brightness into words.
 enum AdaptiveText {
+    /// Why evening warmth is not showing its temperature, or nil when there
+    /// is nothing to explain.
+    static func warmthNote(_ status: WarmthStatus?) -> String? {
+        switch status {
+        case .waitingForPreset:
+            "Waiting: the current color preset has no temperature. Pick a Kelvin preset to let warmth apply."
+        case .heldByUser:
+            "Keeping the temperature you set until the next change."
+        case .retrying:
+            "The display hasn't taken the temperature yet. Glim will try again."
+        case .off, .applying, .applied, nil:
+            nil
+        }
+    }
+
     static func status(_ status: AdaptiveStatus, lux: Double?, builtIn: Double?) -> String {
         switch status {
         case .off:

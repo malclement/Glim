@@ -26,7 +26,7 @@ All probing was read-only, except the one volume test marked below. Run on 2026-
 | **Speaker volume** (per channel) and mute | ✅ | ✅ | CoreAudio on the "HP E27m G4 USB Audio" output. `tools/macos-probe/hpvolume`. **DDC 0x62 mirrors this level.** |
 | Mic gain (per channel) and mute | ✅ | ✅ | CoreAudio |
 | Sample rate | ✅ | ✅ | `kAudioDevicePropertyNominalSampleRate` |
-| Mic-to-speaker sidetone | ✅ present in the USB descriptor | ⚠️ raw UAC requests only | not exposed by CoreAudio |
+| Mic-to-speaker sidetone | ✅ −69 dB, not muted | ✅ raw UAC requests | `tools/macos-probe/uacprobe`; not exposed by CoreAudio |
 | Front-panel audio keys | ✅ in the HID descriptor | listen only | IOHIDManager (needs Input Monitoring permission) |
 | Telephony LEDs (mute, ring, hold…) | ✅ in the HID descriptor | ⚠️ host-drivable | HID output report 9 |
 | HP vendor HID channel | ✅ exists | **don't use** | ⚠️ undocumented; likely HP Display Center / firmware |
@@ -119,7 +119,7 @@ There is no Billboard device and no vendor-class (0xFF) interface.
 - **Topology** (from the descriptor):
   - Playback: stream → mixer 10 → feature unit 2 (mute, per-channel volume) → speaker.
   - Capture: 2-channel mic → feature unit 6 → selector → stream.
-  - A second, 1-channel mic path goes through feature unit 9 into mixer 10. ⚠️ That is a **sidetone** (mic to speaker), which CoreAudio doesn't expose.
+  - A second, 1-channel mic path goes through feature unit 9 into mixer 10. That is a **sidetone** (mic to speaker), which CoreAudio doesn't expose. ✅ Read and set on 2026-11-12 with class requests that need no device open (`uacprobe 0x03f0 0x0b86 9 2 0 2`): master volume −69.00 dB, its floor, in a −69…0 dB range of 0.5 dB steps; master mute off. A `SET_CUR` to −60 dB read back and was restored. ⚠️ Nobody listened to it.
 - **No device-level volume.** There is no element-0 volume, only channels 1 and 2. CLIs that set element 0 do nothing.
 - **Not the default output.** `osascript set volume` acts on the default output only, and the default output is the MacBook speakers. To change the HP's level, either make it the default (`SwitchAudioSource`) or set elements 1 and 2 directly, as `tools/macos-probe/hpvolume` does.
 

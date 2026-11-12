@@ -189,10 +189,10 @@ public actor DDCChannel: DDCDevice {
                 Log.ddc.debug("\(self.label, privacy: .public) get \(code, privacy: .public) attempt \(attempt): unexpected payload \(payload.hexString, privacy: .public)")
             }
         }
-        Log.ddc.error("\(self.label, privacy: .public) get \(code, privacy: .public) failed: \(String(describing: failure), privacy: .public)")
+        Log.ddc.info("\(self.label, privacy: .public) get \(code, privacy: .public) failed: \(String(describing: failure), privacy: .public)")
         consecutiveFailedReads += 1
         if consecutiveFailedReads >= timing.reopenAfterFailedReads {
-            Log.ddc.info("\(self.label, privacy: .public) reopening after \(self.consecutiveFailedReads) unanswered reads")
+            Log.ddc.notice("\(self.label, privacy: .public) reopening after \(self.consecutiveFailedReads) unanswered reads")
             bus = nil
             consecutiveFailedReads = 0
         }
@@ -254,7 +254,7 @@ public actor DDCChannel: DDCDevice {
         } catch {
             consecutiveFailures += 1
             if consecutiveFailures >= timing.reopenAfterFailures {
-                Log.ddc.info("\(self.label, privacy: .public) reopening after \(self.consecutiveFailures) failures")
+                Log.ddc.notice("\(self.label, privacy: .public) reopening after \(self.consecutiveFailures) failures")
                 self.bus = nil
                 consecutiveFailures = 0
             }

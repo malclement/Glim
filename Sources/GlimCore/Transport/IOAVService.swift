@@ -1,6 +1,16 @@
 import Darwin
 import IOKit
 
+/// Whether one of the private IOKit functions was found.
+public struct SymbolStatus: Equatable, Sendable {
+    public var name: String
+    public var resolved: Bool
+    public init(name: String, resolved: Bool) {
+        self.name = name
+        self.resolved = resolved
+    }
+}
+
 /// The private IOKit functions behind DDC/CI on Apple silicon:
 /// `IOAVServiceCreateWithService`, `IOAVServiceReadI2C` and
 /// `IOAVServiceWriteI2C`. m1ddc, MonitorControl and BetterDisplay use the same
@@ -21,6 +31,17 @@ struct IOAVServiceAPI: Sendable {
 
     /// nil when the functions are missing.
     static let shared: IOAVServiceAPI? = load()
+
+    static let symbolNames = ["IOAVServiceCreateWithService", "IOAVServiceReadI2C", "IOAVServiceWriteI2C"]
+
+    /// Which of the three functions IOKit provides, for diagnostics. Logs
+    /// nothing.
+    static func symbolResolution() -> [SymbolStatus] {
+        let handle = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY)
+        return symbolNames.map { name in
+            SymbolStatus(name: name, resolved: handle.flatMap { dlsym($0, name) } != nil)
+        }
+    }
 
     private static func load() -> IOAVServiceAPI? {
         guard let handle = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY) else {

@@ -1,0 +1,25 @@
+# HP E27m G4, firmware 1.0, over USB-C. Several codes set in order from the
+# factory color (14=8, 0C=70), then 0x14 and 0x0C read back. Values are
+# decimal. Measured 2026-11-12 (data/safe-probes-2026-11-12.md).
+#
+# A temperature set by hand that is no preset's own (not 40, 70 or 126)
+# sticks: 0x0C keeps reading it whatever is written to 0x14.
+#
+# sets                  reads
+0C=55 14=5              14=8   0C=55
+0C=55 14=1              14=1   0C=55
+0C=55 14=8              14=2   0C=55
+0C=55 14=8 14=5         14=8   0C=55
+0C=45 14=4              14=5   0C=45
+0C=100 14=8             14=2   0C=100
+# Writing 0x0C to a preset's own value, or to 0, ends it.
+0C=60 0C=70 14=1        14=1   0C=0
+0C=55 0C=40 14=1        14=1   0C=0
+0C=55 0C=40 14=1 14=5   14=8   0C=70
+0C=55 0C=126 14=5       14=8   0C=70
+0C=55 0C=0              14=15  0C=0
+0C=55 0C=0 14=5         14=8   0C=70
+# A lone 0x0C write leaves sRGB and native.
+14=1 0C=70              14=8   0C=70
+14=2 0C=40              14=5   0C=40
+14=1 0C=60              14=8   0C=60

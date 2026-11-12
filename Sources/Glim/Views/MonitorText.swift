@@ -2,6 +2,16 @@ import GlimCore
 
 /// How the app puts a monitor's state into words.
 enum MonitorText {
+    /// What to say when no display is shown. `hint` is the manager's: set
+    /// when a display is plugged in but macOS no longer lets Glim reach it.
+    static func noDisplay(hint: String?) -> (symbol: String, title: String, message: String) {
+        if let hint {
+            return ("display.trianglebadge.exclamationmark", "Can't reach the display",
+                    hint + " Copy the diagnostics to report it.")
+        }
+        return ("display", "No external display", "Connect a display over USB-C, DisplayPort or HDMI to control it from here.")
+    }
+
     static func status(_ status: Monitor.Status) -> String {
         switch status {
         case .connecting: "Connecting…"

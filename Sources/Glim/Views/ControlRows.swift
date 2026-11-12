@@ -5,6 +5,8 @@ import SwiftUI
 struct LevelRow<Symbol: View>: View {
     let title: String
     let control: DeviceControl<Double>
+    /// Appended to the slider's spoken value.
+    var spokenSuffix = ""
     @ViewBuilder let symbol: () -> Symbol
 
     var body: some View {
@@ -14,8 +16,21 @@ struct LevelRow<Symbol: View>: View {
                 .frame(width: 20)
                 .help(title)
                 .accessibilityHidden(true)
-            LevelSlider(title: title, control: control)
+            LevelSlider(title: title, control: control, spokenSuffix: spokenSuffix)
         }
+    }
+}
+
+/// The brightness slider, which also says whether automatic brightness is
+/// driving it.
+struct BrightnessSlider: View {
+    let monitor: Monitor
+    let control: DeviceControl<Double>
+    @Environment(\.adaptive) private var adaptive
+
+    var body: some View {
+        LevelSlider(title: "Brightness", control: control,
+                    spokenSuffix: AccessibilityText.automaticBrightnessSuffix(adaptive?.statuses[monitor.id]))
     }
 }
 
@@ -25,6 +40,8 @@ struct LevelSlider: View {
     let control: DeviceControl<Double>
     /// The value as shown, once read. Percent of the range unless given.
     var valueText: ((Double) -> String)?
+    /// Appended to the spoken value, such as ", adjusting automatically".
+    var spokenSuffix = ""
     /// Wide enough for the badge and the longest value ("6500 K"). The same
     /// for every level, so the sliders line up.
     static let valueWidth: CGFloat = 66
@@ -38,8 +55,8 @@ struct LevelSlider: View {
     }
 
     private var accessibilityValue: String {
-        let value = control.value == nil ? "Unknown" : shownValue
-        return control.failure.map { "\(value). \($0.message)" } ?? value
+        let value = control.value == nil ? "Unknown" : AccessibilityText.spokenTemperature(shownValue)
+        return AccessibilityText.value(value + spokenSuffix, failure: control.failure?.message)
     }
 
     var body: some View {
@@ -82,6 +99,7 @@ struct LevelSlider: View {
 struct VolumeRow: View {
     let volume: DeviceControl<Double>
     let mute: DeviceControl<Bool>?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var isMuted: Bool { mute?.value == true }
 
@@ -94,7 +112,7 @@ struct VolumeRow: View {
                     mute.set(!isMuted)
                 } label: {
                     Image(systemName: symbol)
-                        .contentTransition(.symbolEffect(.replace))
+                        .contentTransition(Motion.symbolTransition(reduceMotion: reduceMotion))
                         .frame(width: 20)
                 }
                 .buttonStyle(.borderless)
@@ -156,18 +174,23 @@ struct ColorPresetRow: View {
     let selector: ColorPresetSelector
 
     var body: some View {
+        // The same three columns as a slider row: the symbol, the control
+        // from the slider's leading edge to its trailing one, then the slot
+        // the sliders keep for their value.
         HStack(spacing: 8) {
             Image(systemName: "paintpalette")
                 .foregroundStyle(.secondary)
                 .frame(width: 20)
+                .help("Color preset")
                 .accessibilityHidden(true)
-            Text("Color")
-            if let failure = selector.failure {
-                FailureBadge(failure: failure)
+            ColorPresetPicker(selector: selector, fillsWidth: true)
+            HStack(spacing: 3) {
+                if let failure = selector.failure {
+                    FailureBadge(failure: failure)
+                }
+                FactoryColorButton(selector: selector)
             }
-            Spacer(minLength: 8)
-            ColorPresetPicker(selector: selector)
-            FactoryColorButton(selector: selector)
+            .frame(width: LevelSlider.valueWidth, alignment: .trailing)
         }
     }
 }
@@ -200,6 +223,9 @@ struct FactoryColorButton: View {
 /// always in the list to come back to.
 struct ColorPresetPicker: View {
     let selector: ColorPresetSelector
+    /// Takes the width it is given, as a slider does, instead of the width
+    /// of its longest name.
+    var fillsWidth = false
 
     private var selection: Binding<ColorPresetValue> {
         Binding(
@@ -225,7 +251,7 @@ struct ColorPresetPicker: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            .fixedSize()
+            .popUpWidth(fills: fillsWidth)
             .accessibilityLabel("Color preset")
         } else {
             Text("–")
@@ -242,6 +268,7 @@ struct InputRow: View {
     let selector: InputSelector
     /// Whether switching inputs was ever tried on this model.
     let isTested: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -249,20 +276,22 @@ struct InputRow: View {
                 Image(systemName: "cable.connector")
                     .foregroundStyle(.secondary)
                     .frame(width: 20)
+                    .help("Input")
                     .accessibilityHidden(true)
-                Text("Input")
-                if let failure = selector.failure {
-                    FailureBadge(failure: failure)
+                InputPicker(selector: selector, fillsWidth: true)
+                HStack(spacing: 3) {
+                    if let failure = selector.failure {
+                        FailureBadge(failure: failure)
+                    }
                 }
-                Spacer(minLength: 8)
-                InputPicker(selector: selector)
+                .frame(width: LevelSlider.valueWidth, alignment: .trailing)
             }
             if let pending = selector.pendingSelection {
                 InputConfirmation(selector: selector, target: pending, isTested: isTested)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(Motion.transition(reduceMotion: reduceMotion))
             }
         }
-        .animation(.easeOut(duration: 0.15), value: selector.pendingSelection)
+        .animation(Motion.animation(reduceMotion: reduceMotion), value: selector.pendingSelection)
     }
 }
 
@@ -270,6 +299,8 @@ struct InputRow: View {
 /// Picking only stages the switch: see ``InputConfirmation``.
 struct InputPicker: View {
     let selector: InputSelector
+    /// Takes the width it is given, as a slider does.
+    var fillsWidth = false
 
     private var selection: Binding<UInt16> {
         Binding(
@@ -300,7 +331,7 @@ struct InputPicker: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            .fixedSize()
+            .popUpWidth(fills: fillsWidth)
             .accessibilityLabel("Input")
         }
     }
@@ -311,6 +342,9 @@ struct InputConfirmation: View {
     let selector: InputSelector
     let target: InputOption
     let isTested: Bool
+    @Environment(\.colorSchemeContrast) private var contrast
+    @FocusState private var cancelHasFocus: Bool
+    @AccessibilityFocusState private var cancelHasVoiceOverFocus: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -330,6 +364,8 @@ struct InputConfirmation: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { selector.cancel() }
                     .keyboardShortcut(.cancelAction)
+                    .focused($cancelHasFocus)
+                    .accessibilityFocused($cancelHasVoiceOverFocus)
                 // Deliberately not the default action: a stray Return must not
                 // take the picture away. Tab to it, or click.
                 Button("Switch") { selector.confirm() }
@@ -337,21 +373,98 @@ struct InputConfirmation: View {
             .controlSize(.small)
         }
         .padding(10)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(.quaternary.opacity(ContrastStyle.cardFillOpacity(contrast)), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(.secondary.opacity(ContrastStyle.cardStrokeOpacity(contrast)), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(AccessibilityText.inputConfirmationLabel)
+        .onAppear(perform: announceAndFocus)
+        .onChange(of: target) { announceAndFocus() }
+    }
+
+    /// Nothing else tells a VoiceOver user the card appeared: say so, and put
+    /// focus on the safe choice.
+    private func announceAndFocus() {
+        AccessibilityNotification.Announcement(AccessibilityText.inputConfirmation(target: target.name)).post()
+        cancelHasFocus = true
+        cancelHasVoiceOverFocus = true
     }
 }
 
-/// A warning symbol whose tooltip and accessibility label carry a control's
-/// failure.
+/// A warning symbol that opens its message in a popover: keyboard reachable,
+/// where a tooltip is not, and spoken in full by VoiceOver.
 struct FailureBadge: View {
     let failure: ControlFailure
+    @State private var isShown = false
 
     var body: some View {
-        Image(systemName: "exclamationmark.triangle.fill")
-            .symbolRenderingMode(.multicolor)
-            .font(.caption)
-            .help(failure.message)
-            .accessibilityLabel(failure.message)
+        Button {
+            isShown.toggle()
+        } label: {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .symbolRenderingMode(.multicolor)
+                .font(.caption)
+        }
+        .buttonStyle(.borderless)
+        .help(failure.message)
+        .accessibilityLabel(AccessibilityText.warningLabel(failure.message))
+        .accessibilityHint("Shows the explanation")
+        .popover(isPresented: $isShown, arrowEdge: .bottom) {
+            Text(failure.message)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 220, alignment: .leading)
+                .padding(10)
+        }
+    }
+}
+
+/// A failure's message in words under the control it concerns, for the
+/// window, where there is room.
+struct FailureCaption: View {
+    let failure: ControlFailure?
+
+    var body: some View {
+        if let failure {
+            Label(failure.message, systemImage: "exclamationmark.triangle.fill")
+                .symbolRenderingMode(.multicolor)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(failure.message)
+        }
+    }
+}
+
+/// A symbol with an explanation in a popover, for notes the menu would
+/// otherwise carry in a tooltip.
+struct InfoBadge: View {
+    let symbol: String
+    let label: String
+    let text: String
+    @State private var isShown = false
+
+    var body: some View {
+        Button {
+            isShown.toggle()
+        } label: {
+            Image(systemName: symbol)
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .help(text)
+        .accessibilityLabel(label)
+        .accessibilityHint(text)
+        .popover(isPresented: $isShown, arrowEdge: .bottom) {
+            Text(text)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 220, alignment: .leading)
+                .padding(10)
+        }
     }
 }
 
@@ -374,4 +487,27 @@ func fraction(of value: Double, in range: ClosedRange<Double>) -> Double {
     let span = range.upperBound - range.lowerBound
     guard span > 0 else { return 0 }
     return min(max((value - range.lowerBound) / span, 0), 1)
+}
+
+extension View {
+    /// At its natural width while that fits, as a fixed-size control is; when
+    /// it doesn't (a long preset or input name in the 300 pt menu), it takes
+    /// what room there is and truncates, rather than overflow the row.
+    func shrinksBeforeOverflowing() -> some View {
+        ViewThatFits(in: .horizontal) {
+            fixedSize()
+            fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// A pop-up button's width: the room it is given, or its natural width
+    /// while that fits.
+    @ViewBuilder
+    func popUpWidth(fills: Bool) -> some View {
+        if fills {
+            fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity)
+        } else {
+            shrinksBeforeOverflowing()
+        }
+    }
 }

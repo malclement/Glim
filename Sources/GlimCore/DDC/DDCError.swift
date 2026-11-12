@@ -32,6 +32,27 @@ public enum DDCError: Error, Equatable, Sendable {
     }
 }
 
+extension DDCError {
+    /// A technical description for diagnostics, keeping what the user
+    /// message leaves out, such as the IOReturn: "readFailed 0xE00002C7".
+    public var technicalDetail: String {
+        switch self {
+        case .writeFailed(let code): "writeFailed \(Self.hex(code))"
+        case .readFailed(let code): "readFailed \(Self.hex(code))"
+        case .unsupported(let code): "unsupported \(code)"
+        case .refused(let code): "refused \(code)"
+        case .transportUnavailable: "transportUnavailable"
+        case .serviceUnavailable: "serviceUnavailable"
+        case .noReply: "noReply"
+        case .timedOut: "timedOut"
+        }
+    }
+
+    private static func hex(_ code: Int32) -> String {
+        "0x" + String(UInt32(bitPattern: code), radix: 16, uppercase: true)
+    }
+}
+
 extension DDCError: LocalizedError {
     public var errorDescription: String? {
         switch self {

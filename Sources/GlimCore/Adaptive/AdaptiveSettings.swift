@@ -42,9 +42,42 @@ public struct AdaptiveSettings: Codable, Hashable, Sendable {
         schedule.dayBrightness = DaySchedule().dayBrightness
         schedule.nightBrightness = DaySchedule().nightBrightness
     }
+
+    /// Color temperatures a stored value may have; anything else is taken
+    /// for damage and replaced by the default.
+    public static let kelvinRange = 1000...10000
+}
+
+// Decoding is tolerant: a field that is missing (written by an older
+// release), unreadable or unknown (written by a newer one) takes its default,
+// and the rest is kept. The encoded shape is what 0.4.0 wrote.
+extension AdaptiveSettings {
+    enum CodingKeys: String, CodingKey {
+        case isEnabled, source, learns, lightCurve, followCurve, schedule, warmsInEvening, dayKelvin, nightKelvin
+    }
+
+    public init(from decoder: Decoder) throws {
+        self.init()
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isEnabled = container.decode(.isEnabled, default: isEnabled)
+        source = container.decode(.source, default: source)
+        learns = container.decode(.learns, default: learns)
+        lightCurve = container.decode(.lightCurve, default: lightCurve)
+        followCurve = container.decode(.followCurve, default: followCurve)
+        schedule = container.decode(.schedule, default: schedule)
+        warmsInEvening = container.decode(.warmsInEvening, default: warmsInEvening)
+        let day: Int = container.decode(.dayKelvin, default: dayKelvin)
+        let night: Int = container.decode(.nightKelvin, default: nightKelvin)
+        dayKelvin = Self.kelvinRange.contains(day) ? day : dayKelvin
+        nightKelvin = Self.kelvinRange.contains(night) ? night : nightKelvin
+    }
 }
 
 /// Day and night, by the clock, with a half-hour ramp between them.
+///
+/// With `dayStarts == nightStarts` the day is zero minutes long: it is always
+/// night, brightness stays at `nightBrightness` and nothing divides or loops.
+/// The values are kept as stored.
 public struct DaySchedule: Codable, Hashable, Sendable {
     /// Minutes after midnight.
     public var dayStarts = 7 * 60
@@ -58,15 +91,16 @@ public struct DaySchedule: Codable, Hashable, Sendable {
 
     public enum Period: Sendable, Equatable { case day, night }
 
-    public func period(at date: Date, calendar: Calendar = .current) -> Period {
+    public func period(at date: Date, calendar: Calendar = .autoupdatingCurrent) -> Period {
         let minute = Self.minuteOfDay(date, calendar: calendar)
         return isDay(minute) ? .day : .night
     }
 
     /// How far into the day, 0 (night) to 1 (day), ramping over the half hour
     /// that follows each change.
-    public func dayness(at date: Date, calendar: Calendar = .current) -> Double {
+    public func dayness(at date: Date, calendar: Calendar = .autoupdatingCurrent) -> Double {
         let minute = Self.minuteOfDay(date, calendar: calendar)
+        if dayStarts == nightStarts { return 1 }
         let sinceDay = Self.minutes(from: dayStarts, to: minute)
         let sinceNight = Self.minutes(from: nightStarts, to: minute)
         if isDay(minute) {
@@ -75,14 +109,25 @@ public struct DaySchedule: Codable, Hashable, Sendable {
         return max(1 - sinceNight / Self.rampMinutes, 0)
     }
 
-    public func brightness(at date: Date, calendar: Calendar = .current) -> Double {
+    public func brightness(at date: Date, calendar: Calendar = .autoupdatingCurrent) -> Double {
         let dayness = dayness(at: date, calendar: calendar)
         return nightBrightness + (dayBrightness - nightBrightness) * dayness
     }
 
+    /// The moment `minutes` after midnight on `date`'s day, by the wall
+    /// clock. Unlike midnight plus `minutes * 60` seconds, it is right on a
+    /// day when the clocks change.
+    public static func date(atMinute minutes: Int, on date: Date, calendar: Calendar = .autoupdatingCurrent) -> Date {
+        let clamped = min(max(minutes, 0), 24 * 60 - 1)
+        return calendar.date(bySettingHour: clamped / 60, minute: clamped % 60, second: 0, of: date)
+            ?? calendar.startOfDay(for: date).addingTimeInterval(Double(clamped) * 60)
+    }
+
     private func isDay(_ minute: Double) -> Bool {
+        // Equal times leave no night: always day.
+        if dayStarts == nightStarts { return true }
         // Day is the stretch from dayStarts forward to nightStarts.
-        Self.minutes(from: dayStarts, to: minute) < Self.minutes(from: dayStarts, to: Double(nightStarts))
+        return Self.minutes(from: dayStarts, to: minute) < Self.minutes(from: dayStarts, to: Double(nightStarts))
     }
 
     private static func minuteOfDay(_ date: Date, calendar: Calendar) -> Double {
@@ -94,5 +139,41 @@ public struct DaySchedule: Codable, Hashable, Sendable {
     private static func minutes(from start: Int, to minute: Double) -> Double {
         let difference = minute - Double(start)
         return difference >= 0 ? difference : difference + 24 * 60
+    }
+}
+
+extension DaySchedule {
+    enum CodingKeys: String, CodingKey {
+        case dayStarts, nightStarts, dayBrightness, nightBrightness
+    }
+
+    public init(from decoder: Decoder) throws {
+        self.init()
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        func minute(_ key: CodingKeys, _ fallback: Int) -> Int {
+            Self.clampedMinute(container.decode(key, default: fallback))
+        }
+        func level(_ key: CodingKeys, _ fallback: Double) -> Double {
+            Self.clampedLevel(container.decode(key, default: fallback), fallback)
+        }
+        dayStarts = minute(.dayStarts, dayStarts)
+        nightStarts = minute(.nightStarts, nightStarts)
+        dayBrightness = level(.dayBrightness, dayBrightness)
+        nightBrightness = level(.nightBrightness, nightBrightness)
+    }
+
+    /// Never writes a value that a decoder can't read back.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        let defaults = DaySchedule()
+        try container.encode(Self.clampedMinute(dayStarts), forKey: .dayStarts)
+        try container.encode(Self.clampedMinute(nightStarts), forKey: .nightStarts)
+        try container.encode(Self.clampedLevel(dayBrightness, defaults.dayBrightness), forKey: .dayBrightness)
+        try container.encode(Self.clampedLevel(nightBrightness, defaults.nightBrightness), forKey: .nightBrightness)
+    }
+
+    private static func clampedMinute(_ minute: Int) -> Int { min(max(minute, 0), 24 * 60 - 1) }
+    private static func clampedLevel(_ level: Double, _ fallback: Double) -> Double {
+        level.isFinite ? min(max(level, 0), 1) : fallback
     }
 }

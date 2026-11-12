@@ -50,15 +50,30 @@ public struct ControlFailure: Equatable, Sendable {
     public var message: String
     /// Whether retrying might help.
     public var isTransient: Bool
+    /// What the message leaves out, for diagnostics: for example
+    /// "readFailed 0xE00002C7". Not shown in the UI.
+    public var detail: String?
 
     init(_ error: any Error) {
         message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+        detail = (error as? DDCError)?.technicalDetail ?? String(describing: error)
         switch error {
         case let error as DDCError: isTransient = error.isTransient
         case AudioError.notSupported: isTransient = false
         default: isTransient = true
         }
     }
+}
+
+/// Where a change to a control comes from.
+public enum ChangeOrigin: Sendable, Equatable {
+    /// Someone moved a slider, picked a value or grabbed a handle.
+    case user
+    /// Applying a saved scene: the user's doing, but not a statement about
+    /// what the light calls for, so it is not learned from.
+    case scene
+    /// Glim itself (automatic brightness, evening warmth).
+    case automatic
 }
 
 /// One control of a monitor (a slider, a toggle, a choice) and its
@@ -95,6 +110,9 @@ public final class DeviceControl<Value: Sendable & Equatable> {
     /// opposed to automatic adjustment. Automatic brightness watches it to
     /// know that someone took over.
     @ObservationIgnored public private(set) var userChanges = 0
+    /// How many of ``userChanges`` came from a scene (``ChangeOrigin/scene``).
+    /// A scene is a takeover, but automatic brightness doesn't learn from it.
+    @ObservationIgnored public private(set) var sceneChanges = 0
 
     @ObservationIgnored private let backend: ControlBackend<Value>
     @ObservationIgnored private let timing: ControlTiming
@@ -134,12 +152,16 @@ public final class DeviceControl<Value: Sendable & Equatable> {
     /// free. Ignored until the device has been read once, because until then
     /// its range, and whether it answers at all, is unknown.
     ///
-    /// - Parameter automatic: true for a change Glim makes on its own
-    ///   (automatic brightness), which doesn't count in ``userChanges``.
-    public func set(_ newValue: Value, automatic: Bool = false) {
+    /// - Parameter origin: ``ChangeOrigin/automatic`` for a change Glim makes
+    ///   on its own, which doesn't count in ``userChanges``; a scene counts in
+    ///   both ``userChanges`` and ``sceneChanges``.
+    public func set(_ newValue: Value, origin: ChangeOrigin = .user) {
         guard !invalidated, value != nil else { return }
+        // Not a level anyone meant, and `Int(_:)` traps on it further down.
+        if let level = newValue as? Double, !level.isFinite { return }
         let target = quantize(newValue, range)
-        if !automatic { userChanges &+= 1 }
+        if origin != .automatic { userChanges &+= 1 }
+        if origin == .scene { sceneChanges &+= 1 }
         guard target != value || writer != nil else { return }
         value = target
         generation &+= 1
@@ -149,6 +171,10 @@ public final class DeviceControl<Value: Sendable & Equatable> {
         if writer == nil {
             writer = Task { [weak self] in await self?.drainWrites() }
         }
+    }
+
+    public func set(_ newValue: Value, automatic: Bool) {
+        set(newValue, origin: automatic ? .automatic : .user)
     }
 
     /// Call when a drag starts and ends. Reads are held off during a drag.
@@ -174,6 +200,14 @@ public final class DeviceControl<Value: Sendable & Equatable> {
     public func refresh() async {
         guard !invalidated, writer == nil, !isEditing else { return }
         await readBack(expecting: generation)
+    }
+
+    /// Forgets what was last written, so the next change is sent even if it
+    /// equals it. For when the device may have changed behind Glim's back:
+    /// a monitor that was asleep or switched off can come back at its own
+    /// defaults.
+    func forgetLastWritten() {
+        lastWritten = nil
     }
 
     /// Stops all work. The control is dead afterwards.
@@ -205,6 +239,10 @@ public final class DeviceControl<Value: Sendable & Equatable> {
                 // A dead control's late failure, from a transport that has
                 // since been replaced, says nothing about the monitor now.
                 guard !invalidated, !(error is CancellationError) else { continue }
+                // The frame may have reached the device all the same, so what
+                // it holds is unknown: going back to the earlier value must be
+                // sent, not skipped as "already written".
+                lastWritten = nil
                 // Shown on this control only. Whether the monitor as a whole
                 // answers is for the read-back to tell: a single dropped write
                 // must not swap the controls out from under a drag.
@@ -267,11 +305,17 @@ public final class DeviceControl<Value: Sendable & Equatable> {
 extension ControlBackend where Value == Double {
     /// A continuous VCP code. The range is 0 to the maximum the display
     /// reports with every read.
+    ///
+    /// A maximum of 0 is no range at all: a slider over it could only write
+    /// 0 or 1, and automatic brightness would take the display there by
+    /// itself. Such a code is treated as one the display does not offer. A
+    /// current value above the maximum is shown at the maximum.
     public static func vcpLevel(_ code: VCPCode, on device: any DDCDevice) -> ControlBackend<Double> {
         ControlBackend(
             read: {
                 let reading = try await device.read(code)
-                return DeviceReading(value: Double(reading.current), range: 0...Double(max(reading.maximum, 1)))
+                guard reading.maximum > 0 else { throw DDCError.unsupported(code) }
+                return DeviceReading(value: Double(min(reading.current, reading.maximum)), range: 0...Double(reading.maximum))
             },
             write: { value in
                 try await device.write(code, value: UInt16(clamping: Int(value.rounded())))
@@ -301,8 +345,11 @@ extension ControlBackend where Value == Double {
         return ControlBackend(
             read: {
                 let reading = try await device.read(.colorTemperature)
+                // The range starts at 1, so a maximum below 2 leaves nothing
+                // to choose.
+                guard reading.maximum > 1 else { throw DDCError.unsupported(.colorTemperature) }
                 withoutTemperature.withLock { $0 = reading.current == 0 }
-                return DeviceReading(value: Double(reading.current), range: 1...Double(max(reading.maximum, 1)))
+                return DeviceReading(value: Double(min(reading.current, reading.maximum)), range: 1...Double(reading.maximum))
             },
             write: { value in
                 if let preset = scale.kelvinPreset, withoutTemperature.withLock({ $0 }) {
@@ -318,7 +365,18 @@ extension ControlBackend where Value == Double {
 extension ControlBackend where Value == ColorPresetValue {
     /// VCP 0x14, translated through the monitor's preset table. Reads 0x0C
     /// too when the table needs it to tell presets apart.
-    public static func colorPreset(on device: any DDCDevice, presets: ColorPresets) -> ControlBackend<ColorPresetValue> {
+    ///
+    /// On such a monitor a pick is checked: writing 0x14 is not enough when
+    /// the temperature was set by hand. The HP E27m G4 then keeps reading the
+    /// hand-set 0x0C whatever 0x14 is written, so its factory preset is not
+    /// a reset from there (data/safe-probes-2026-11-12.md). If 0x0C does not
+    /// read what the picked preset should, the temperature is written to a
+    /// preset's own value, which ends that state, and for a preset without a
+    /// temperature the pick is written again.
+    ///
+    /// - Parameter verifyDelay: how long after the 0x14 write 0x0C is read.
+    public static func colorPreset(on device: any DDCDevice, presets: ColorPresets,
+                                   verifyDelay: Duration = .milliseconds(300)) -> ControlBackend<ColorPresetValue> {
         ControlBackend(
             read: {
                 let reading = try await device.read(.colorPreset).current & 0xFF
@@ -330,6 +388,17 @@ extension ControlBackend where Value == ColorPresetValue {
                 // what was read, and there is nothing to send.
                 guard case .preset(let raw) = value else { return }
                 try await device.write(.colorPreset, value: raw)
+                guard presets.readsTemperature, let expected = presets.option(for: value)?.temperature else { return }
+                if verifyDelay > .zero { try await Task.sleep(for: verifyDelay) }
+                guard try await device.read(.colorTemperature).current != expected else { return }
+                if expected != 0 {
+                    // The preset's own temperature: the pair then reads as
+                    // the preset does.
+                    try await device.write(.colorTemperature, value: expected)
+                } else if let neutral = presets.neutralTemperature {
+                    try await device.write(.colorTemperature, value: neutral)
+                    try await device.write(.colorPreset, value: raw)
+                }
             }
         )
     }

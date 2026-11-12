@@ -12,5 +12,7 @@
 /tools/macos-probe/usbdescprobe
 /tools/macos-probe/hidprobe
 /tools/macos-probe/hpvolume
+/tools/macos-probe/displaymode
+/tools/macos-probe/uacprobe
 *.o
 .DS_Store
