@@ -129,7 +129,7 @@ enum Situation: String, CaseIterable, Sendable {
         let setup = try await Setup.make(.hp)
         let report = setup.manager.diagnosticsReport(appVersion: "test")
         #expect(report.contains("HP E27m G4"))
-        #expect(report.contains("profile: hp-e27m-g4 (tested; untested: colorPreset, colorTemperature, input)"))
+        #expect(report.contains("profile: hp-e27m-g4 (tested; untested: input)"))
         #expect(report.contains("serial present"))
         #expect(!report.contains("TEST0000001"))
     }

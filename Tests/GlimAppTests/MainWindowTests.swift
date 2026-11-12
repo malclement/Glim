@@ -360,7 +360,7 @@ import Testing
     // MARK: Wording
 
     @Test func theProfileSaysWhichControlsWereNotTested() {
-        #expect(MonitorText.profile(.hpE27mG4) == "Tested with Glim, except color temperature, color presets and input switching")
+        #expect(MonitorText.profile(.hpE27mG4) == "Tested with Glim, except input switching")
         var profile = MonitorProfile.hpE27mG4
         profile.untested = []
         #expect(MonitorText.profile(profile) == "Tested with Glim")

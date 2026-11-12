@@ -318,7 +318,18 @@ extension ControlBackend where Value == Double {
 extension ControlBackend where Value == ColorPresetValue {
     /// VCP 0x14, translated through the monitor's preset table. Reads 0x0C
     /// too when the table needs it to tell presets apart.
-    public static func colorPreset(on device: any DDCDevice, presets: ColorPresets) -> ControlBackend<ColorPresetValue> {
+    ///
+    /// On such a monitor a pick is checked: writing 0x14 is not enough when
+    /// the temperature was set by hand. The HP E27m G4 then keeps reading the
+    /// hand-set 0x0C whatever 0x14 is written, so its factory preset is not
+    /// a reset from there (data/safe-probes-2026-11-12.md). If 0x0C does not
+    /// read what the picked preset should, the temperature is written to a
+    /// preset's own value, which ends that state, and for a preset without a
+    /// temperature the pick is written again.
+    ///
+    /// - Parameter verifyDelay: how long after the 0x14 write 0x0C is read.
+    public static func colorPreset(on device: any DDCDevice, presets: ColorPresets,
+                                   verifyDelay: Duration = .milliseconds(300)) -> ControlBackend<ColorPresetValue> {
         ControlBackend(
             read: {
                 let reading = try await device.read(.colorPreset).current & 0xFF
@@ -330,6 +341,17 @@ extension ControlBackend where Value == ColorPresetValue {
                 // what was read, and there is nothing to send.
                 guard case .preset(let raw) = value else { return }
                 try await device.write(.colorPreset, value: raw)
+                guard presets.readsTemperature, let expected = presets.option(for: value)?.temperature else { return }
+                if verifyDelay > .zero { try await Task.sleep(for: verifyDelay) }
+                guard try await device.read(.colorTemperature).current != expected else { return }
+                if expected != 0 {
+                    // The preset's own temperature: the pair then reads as
+                    // the preset does.
+                    try await device.write(.colorTemperature, value: expected)
+                } else if let neutral = presets.neutralTemperature {
+                    try await device.write(.colorTemperature, value: neutral)
+                    try await device.write(.colorPreset, value: raw)
+                }
             }
         )
     }

@@ -86,14 +86,15 @@ public struct MonitorProfile: Sendable, Equatable {
     /// - Volume and mute: the speakers are a USB Audio device, set and read
     ///   back. DDC 0x62 accepts writes and ignores them; it only mirrors the
     ///   USB level.
-    /// - Color temperature 0x0C and preset 0x14: written and read back by the
-    ///   CLI (docs/controls.md, "0x14 color-preset mapping"), but not yet by
-    ///   the app's controls, so they stay untested until `make
-    ///   hardware-test` passes with the monitor attached. 0x14 reads back in
+    /// - Color temperature 0x0C and preset 0x14: written and read back
+    ///   through the app's own controls by the hardware tests (2026-11-12),
+    ///   by read-back only: nobody watched the picture. 0x14 reads back in
     ///   HP's numbering, and one reading can stand for several presets, so a
-    ///   preset is recognized by 0x14 and 0x0C together. Only the presets
-    ///   whose effect the measurements pin down are offered; 03, 06, 07, 0A
-    ///   and the user presets wait for someone to look at the screen.
+    ///   preset is recognized by 0x14 and 0x0C together. A temperature set by
+    ///   hand outlives a 0x14 write, so every pick is checked against 0x0C
+    ///   (`ControlBackend.colorPreset`). Only the presets whose effect the
+    ///   measurements pin down are offered; 03, 06, 07, 0A and the user
+    ///   presets wait for someone to look at the screen.
     /// - Inputs: the three values in the monitor's capabilities string, with
     ///   HP's names (0x13 is HP's USB-C value; MCCS reserves it). **Never
     ///   written to the hardware**: the owner deferred input switching, and
@@ -101,12 +102,12 @@ public struct MonitorProfile: Sendable, Equatable {
     public static let hpE27mG4 = MonitorProfile(
         id: "hp-e27m-g4",
         isTested: true,
-        untested: [.input, .colorTemperature, .colorPreset],
+        untested: [.input],
         brightness: true,
         contrast: true,
-        // 0x0B reads 50. Leaving sRGB or native for a temperature goes
-        // through 6500 K, a preset that has one.
-        colorTemperature: ColorTemperatureScale(increment: 50, kelvinPreset: 0x05),
+        // 0x0B reads 50. A lone 0x0C write leaves sRGB and native by itself
+        // (read back on the hardware, 2026-11-12), so no preset goes first.
+        colorTemperature: ColorTemperatureScale(increment: 50, kelvinPreset: nil),
         colorPresets: ColorPresets(
             options: [
                 ColorPresetOption(value: 0x01, name: "sRGB", reading: 1, temperature: 0),
@@ -117,6 +118,8 @@ public struct MonitorProfile: Sendable, Equatable {
             ],
             factory: 0x05,
             readsTemperature: true,
+            // Checked against 0x0C after every pick: a temperature set by
+            // hand outlives a 0x14 write (`ColorPresets.neutralTemperature`).
             // Any RGB gain write, user 1, and 0x0C = 0 all read 15.
             otherNames: [15: "Custom RGB"]
         ),

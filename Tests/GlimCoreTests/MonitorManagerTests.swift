@@ -249,10 +249,11 @@ import Testing
         let hp = MonitorProfile.hpE27mG4
         #expect(hp.isTested)
         #expect(hp.isTested(.brightness) && hp.isTested(.contrast) && hp.isTested(.volume) && hp.isTested(.mute))
-        // Input switching was never tried on the hardware, and the color
-        // controls only by the CLI, not yet by the app.
+        // Input switching was never tried on the hardware. The color
+        // controls passed the hardware tests on 2026-11-12.
         #expect(!hp.isTested(.input))
-        #expect(!hp.isTested(.colorTemperature) && !hp.isTested(.colorPreset))
+        #expect(hp.untested == [.input])
+        #expect(hp.isTested(.colorTemperature) && hp.isTested(.colorPreset))
         #expect(!MonitorProfile.generic(capabilities: nil).isTested(.brightness))
     }
 

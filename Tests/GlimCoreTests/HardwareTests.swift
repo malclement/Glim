@@ -133,7 +133,9 @@ struct HardwareTests {
     //
     // 0x0C and 0x14 were written and read back during the reverse
     // engineering (docs/controls.md). Both tests start from the factory color
-    // and put the monitor back there, which `0x14 ← 05` alone does.
+    // and put the monitor back there. `0x14 ← 05` alone does not: after a
+    // temperature set by hand the HP keeps it (data/safe-probes-2026-11-12.md),
+    // so the restore writes 0x0C to the factory preset's own value first.
 
     /// The factory color: 6500 K, which reads 8 in 0x14 and 70 in 0x0C.
     private func factoryColor(_ device: any DDCDevice) async throws -> Bool {
@@ -143,6 +145,12 @@ struct HardwareTests {
         return preset == 8 && temperature == 70
     }
 
+    /// Back to the factory color from any state.
+    private func restoreFactoryColor(_ device: any DDCDevice) async throws {
+        try await device.write(.colorTemperature, value: 70)
+        try await device.write(.colorPreset, value: 0x05)
+    }
+
     /// Each preset Glim offers, written, then recognized through the
     /// measured table from what 0x14 and 0x0C read back.
     @Test func everyOfferedPresetIsRecognized() async throws {
@@ -150,7 +158,7 @@ struct HardwareTests {
         try #require(try await factoryColor(device), "set the monitor to its factory color first: ./glim set 14 5")
         let presets = try #require(MonitorProfile.hpE27mG4.colorPresets)
         let backend = ControlBackend<ColorPresetValue>.colorPreset(on: device, presets: presets)
-        try await restoring({ try await device.write(.colorPreset, value: 0x05) }) {
+        try await restoring({ try await restoreFactoryColor(device) }) {
             for option in presets.options {
                 try await device.write(.colorPreset, value: option.value)
                 try await Task.sleep(for: .milliseconds(800))
@@ -169,7 +177,7 @@ struct HardwareTests {
         try #require(try await factoryColor(device), "set the monitor to its factory color first: ./glim set 14 5")
         let monitor = Monitor(id: "hardware-test", display: try hp(), device: device, timing: .standard)
         defer { monitor.invalidate() }
-        try await restoring({ try await device.write(.colorPreset, value: 0x05) }) {
+        try await restoring({ try await restoreFactoryColor(device) }) {
             monitor.start()
             let loaded = await eventually(timeout: .seconds(15)) {
                 monitor.colorTemperature?.value != nil && monitor.colorPreset?.value != nil
@@ -187,6 +195,19 @@ struct HardwareTests {
             #expect(await eventually(timeout: .seconds(15)) { selector.current?.name == "5000 K" })
             #expect(try await device.read(.colorTemperature).current == 40)
 
+            temperature.set(55)
+            #expect(await eventually(timeout: .seconds(15)) { selector.currentName == "Custom" })
+
+            // From a temperature set by hand, every pick still lands: the
+            // HP keeps 0x0C through a 0x14 write, and Glim puts it right.
+            let srgb = try #require(selector.options.first { $0.name == "sRGB" })
+            selector.select(srgb)
+            #expect(await eventually(timeout: .seconds(15)) { temperature.value == 0 && selector.current == srgb })
+            temperature.set(55)
+            #expect(await eventually(timeout: .seconds(15)) { selector.currentName == "Custom" })
+            let cool = try #require(selector.options.first { $0.name == "9300 K" })
+            selector.select(cool)
+            #expect(await eventually(timeout: .seconds(15)) { temperature.value == 126 && selector.current == cool })
             temperature.set(55)
             #expect(await eventually(timeout: .seconds(15)) { selector.currentName == "Custom" })
 
