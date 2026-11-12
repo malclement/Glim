@@ -10,6 +10,27 @@ import Testing
 /// is not built without an assistive client, so a label cannot be read back
 /// from a rendered view.
 @Suite struct AccessibilityHelperTests {
+    /// Evening warmth explains itself only when it is not simply done.
+    @Test func warmthNotes() {
+        #expect(AdaptiveText.warmthNote(nil) == nil)
+        #expect(AdaptiveText.warmthNote(.off) == nil)
+        #expect(AdaptiveText.warmthNote(.applied(kelvin: 4500)) == nil)
+        #expect(AdaptiveText.warmthNote(.applying(kelvin: 4500)) == nil)
+        #expect(AdaptiveText.warmthNote(.waitingForPreset)?.contains("no temperature") == true)
+        #expect(AdaptiveText.warmthNote(.heldByUser)?.contains("you set") == true)
+        #expect(AdaptiveText.warmthNote(.retrying)?.contains("try again") == true)
+    }
+
+    /// The empty state says a display is there but out of reach when the
+    /// registry shows one Glim could not use.
+    @Test func theEmptyStateFollowsTheDiscoveryHint() {
+        let plain = MonitorText.noDisplay(hint: nil)
+        #expect(plain.title == "No external display" && plain.symbol == "display")
+        let hinted = MonitorText.noDisplay(hint: "A display is connected, but Glim can't reach it.")
+        #expect(hinted.title == "Can't reach the display")
+        #expect(hinted.message.hasPrefix("A display is connected") && hinted.message.contains("diagnostics"))
+    }
+
     @Test func theInputConfirmationIsAnnounced() {
         #expect(AccessibilityText.inputConfirmation(target: "HDMI") == "Switch to HDMI? Cancel or Switch.")
         #expect(AccessibilityText.inputConfirmationLabel == "Confirm input switch")

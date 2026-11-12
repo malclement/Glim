@@ -102,9 +102,11 @@ private struct ScheduleSection: View {
     /// Minutes after midnight, as a time today.
     private func minuteBinding(_ keyPath: WritableKeyPath<DaySchedule, Int>) -> Binding<Date> {
         Binding(
-            get: { Calendar.current.startOfDay(for: Date()).addingTimeInterval(Double(schedule[keyPath: keyPath]) * 60) },
+            // By the wall clock: seconds added to midnight are an hour off on
+            // the day the clocks change.
+            get: { DaySchedule.date(atMinute: schedule[keyPath: keyPath], on: Date()) },
             set: { date in
-                let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+                let parts = Calendar.autoupdatingCurrent.dateComponents([.hour, .minute], from: date)
                 update { $0[keyPath: keyPath] = (parts.hour ?? 0) * 60 + (parts.minute ?? 0) }
             }
         )
@@ -169,10 +171,16 @@ struct EveningWarmthSection: View {
             Text("Evening warmth")
         } footer: {
             if settings.warmsInEvening {
-                Text("Set when the night or the day begins. A temperature you pick in between holds until the next change.")
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    // What warmth is doing right now, when it is not simply done.
+                    if let note = AdaptiveText.warmthNote(controller.warmthStatuses[monitor.id]) {
+                        Label(note, systemImage: "info.circle")
+                    }
+                    Text("Set when the night or the day begins. A temperature you pick in between holds until the next change.")
+                }
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -309,6 +317,21 @@ struct CurveView: View {
 
 /// How the app puts automatic brightness into words.
 enum AdaptiveText {
+    /// Why evening warmth is not showing its temperature, or nil when there
+    /// is nothing to explain.
+    static func warmthNote(_ status: WarmthStatus?) -> String? {
+        switch status {
+        case .waitingForPreset:
+            "Waiting: the current color preset has no temperature. Pick a Kelvin preset to let warmth apply."
+        case .heldByUser:
+            "Keeping the temperature you set until the next change."
+        case .retrying:
+            "The display hasn't taken the temperature yet. Glim will try again."
+        case .off, .applying, .applied, nil:
+            nil
+        }
+    }
+
     static func status(_ status: AdaptiveStatus, lux: Double?, builtIn: Double?) -> String {
         switch status {
         case .off:

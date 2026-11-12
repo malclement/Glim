@@ -129,14 +129,25 @@ private actor BrokenBus: DDCDevice {
         #expect(log.entries.last?.message == "event 99")
     }
 
-    @Test func theRingMergesAnImmediateRepeat() {
+    /// A repeat merges with its earlier entry when that is among the last
+    /// few, so two failures alternating do not fill the ring; one further
+    /// back starts a new line.
+    @Test func theRingMergesARecentRepeat() {
         let log = EventLog()
         log.record("a", "same")
         log.record("a", "same")
         log.record("b", "same")
         log.record("a", "same")
-        #expect(log.entries.map(\.count) == [2, 1, 1])
-        #expect(log.lines().first?.hasSuffix("(x2)") == true)
+        // In the order things last happened.
+        #expect(log.entries.map(\.category) == ["b", "a"])
+        #expect(log.entries.map(\.count) == [1, 3])
+        #expect(log.lines().last?.hasSuffix("(x3)") == true)
+
+        for index in 0..<EventLog.mergeWindow { log.record("c", "other \(index)") }
+        log.record("a", "same")
+        #expect(log.entries.last?.count == 1)
+        #expect(log.entries.count == 3 + EventLog.mergeWindow)
+        #expect(log.entries.map(\.count).reduce(0, +) == 5 + EventLog.mergeWindow)
     }
 
     @Test func theRingTakesEventsFromManyTasks() async {

@@ -61,11 +61,8 @@ struct MenuContentView: View {
                     .frame(maxWidth: .infinity, minHeight: 44)
                 } else {
                     VStack(spacing: 8) {
-                        MessageView(
-                            symbol: "display",
-                            title: "No external display",
-                            message: "Connect a display over USB-C, DisplayPort or HDMI to control it from here."
-                        )
+                        let text = MonitorText.noDisplay(hint: manager.discoveryHint)
+                        MessageView(symbol: text.symbol, title: text.title, message: text.message)
                         CopyDiagnosticsButton(manager: manager).controlSize(.small)
                     }
                     .frame(maxWidth: .infinity)

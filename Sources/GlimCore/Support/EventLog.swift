@@ -31,11 +31,22 @@ public final class EventLog: Sendable {
     /// Records an event. Repeating the previous event exactly (same category
     /// and message) raises its count instead of adding an entry, so a failure
     /// that repeats on every refresh does not push everything else out.
+    /// How far back a repeat is looked for.
+    static let mergeWindow = 8
+
     public func record(_ category: String, _ message: String, at date: Date = Date()) {
         storage.withLock { entries in
-            if let last = entries.last, last.category == category, last.message == message {
-                entries[entries.count - 1].count += 1
-                entries[entries.count - 1].date = date
+            // A monitor that does not answer fails one control after another,
+            // pass after pass: the repeat to merge with is among the last few
+            // entries, not always the very last.
+            let recent = entries.indices.suffix(Self.mergeWindow)
+            if let index = recent.last(where: { entries[$0].category == category && entries[$0].message == message }) {
+                // Counted on its earlier line, which moves to the end: the
+                // ring stays in the order things last happened.
+                var entry = entries.remove(at: index)
+                entry.count += 1
+                entry.date = date
+                entries.append(entry)
                 return
             }
             entries.append(Entry(date: date, category: category, message: message, count: 1))

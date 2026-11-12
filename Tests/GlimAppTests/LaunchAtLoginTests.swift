@@ -140,14 +140,15 @@ final class ScriptedLoginItem: LoginItemService {
         model.refresh()
         model.setEnabled(true)
         model.setEnabled(false)
+        // A status seen again is counted on its line, which moves to the end.
         let messages = events.entries.map(\.message)
         #expect(messages == [
-            "login item status: notRegistered",
             "registering the login item",
             "login item status: enabled",
             "unregistering the login item",
             "login item status: notRegistered",
         ])
+        #expect(events.entries.last?.count == 2)
     }
 
     @Test func aFailedRegisterIsRecorded() {

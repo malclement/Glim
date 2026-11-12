@@ -134,8 +134,8 @@ struct MainWindowView: View {
                 ProgressView("Looking for displays…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                NoMonitorView(manager: manager, symbol: "display", title: "No external display",
-                              message: "Connect a display over USB-C, DisplayPort or HDMI to control it from here.")
+                let text = MonitorText.noDisplay(hint: manager.discoveryHint)
+                NoMonitorView(manager: manager, symbol: text.symbol, title: text.title, message: text.message)
             }
         }
     }
