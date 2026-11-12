@@ -1,5 +1,7 @@
 # Glim: build, test and package the menu bar app.
-# Needs only the Xcode Command Line Tools (swift 6, codesign, hdiutil, notarytool).
+# Build, test and `make app` need only the Xcode Command Line Tools (swift 6,
+# codesign). `make dmg` also needs hdiutil, Python 3.10+ or uv, and network
+# access (scripts/make-dmg.sh); `make notarize` needs notarytool and credentials.
 # `make help` lists the targets.
 
 APP_NAME      = Glim
@@ -39,11 +41,14 @@ help:
 	@echo "  make test            unit and mock-hardware tests (no monitor needed)"
 	@echo "  make check           build and test with warnings as errors (what CI runs)"
 	@echo "  make hardware-test   tests against a connected monitor (safe, reversible writes)"
+	@echo "  make release         release build only (arm64)"
+	@echo "  make icon            dist/AppIcon.icns"
 	@echo "  make app             dist/Glim.app: release build, icon, signed"
 	@echo "  make run             build the app and launch it"
 	@echo "  make dmg             dist/Glim-$(VERSION).dmg"
 	@echo "  make notarize        notarize and staple the app and the DMG (needs credentials)"
 	@echo "  make verify          check signature, hardened runtime, Gatekeeper and staple"
+	@echo "  make verify-strict   the release gate: needs a Developer ID signature, notarization and a staple"
 	@echo "  make glim            the C research CLI (./glim), see docs/ddc-ci-protocol.md"
 	@echo "  make probes          the read-only macOS probes in tools/macos-probe"
 	@echo "  make clean           remove build output"
@@ -111,3 +116,4 @@ probes:
 
 clean:
 	rm -rf .build dist glim
+	$(MAKE) -C tools/macos-probe clean
