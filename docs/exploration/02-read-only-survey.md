@@ -15,7 +15,7 @@ mkdir -p $M
 
 This is the monitor's self-description, read in 32-byte fragments: `prot`, `type`, `model`, `cmds` (the op-codes it accepts) and `vcp` (the codes it claims, with allowed values in parentheses). Expect 2–4 seconds.
 
-- **Shifted reads are normal.** About one read in seven came back shifted on the HP, and `glim` rejects and retries them. If `caps` prints `no capabilities reply`, run it again with `-v` to see the frames.
+- **Shifted reads are normal.** Roughly one read in eight came back shifted on the HP (7 of 53 in the capture), and `glim` rejects and retries them. If `caps` prints `no capabilities reply`, run it again with `-v` to see the frames.
 - **Treat the string as a hint, not the truth.** On the HP it listed six codes that refuse a plain read, and left out nine that answer one. Phase 3 reconciles the two lists.
 
 ## Full scan: the baseline

@@ -4,7 +4,7 @@ Glim is one SwiftPM package with two products: `GlimCore`, a library holding eve
 
 ```
 ┌ Glim (app) ──────────────────────────────────────────────────────────────┐
-│ GlimApp · AppDelegate · AppPresence · MainWindowController               │
+│ GlimApp · AppDelegate · AppPresence · MainWindowController · GlimStore   │
 │ MenuContentView · MonitorSectionView · MainWindowView · Settings         │
 └───────────────┬──────────────────────────────────────────────────────────┘
                 │ observes (Observation), calls set / refresh / confirm
@@ -17,6 +17,7 @@ Glim is one SwiftPM package with two products: `GlimCore`, a library holding eve
 │           │ Notifier (IOKit) │   │    └ IOAVService │   │              │  │
 │           └──────────────────┘   └──────────────────┘   └──────────────┘  │
 │ Protocol  DDC framing · VCPRequest · CapabilitiesRequest · MonitorCapabilities │
+│ Also      Adaptive (AdaptiveController, LightSources) · Scenes · Support │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -38,13 +39,13 @@ Three protocols are the seams that make the core testable without a monitor:
 
 ## State
 
-`MonitorManager` owns the list of `Monitor`s. `Monitor` owns its controls. Nothing else holds state: values always come from the monitor, and `UserDefaults` holds only which rows the menu shows, where Glim appears (menu bar, Dock) and the window's frame.
+`MonitorManager` owns the list of `Monitor`s. `Monitor` owns its controls. Nothing else holds state: values always come from the monitor. `UserDefaults` holds which rows the menu shows, where Glim appears (menu bar, Dock) and the window's frame, and, through `GlimStore`, the scenes, each display's own name and menu choices, and the automatic brightness and evening warmth settings (JSON under the keys `scenes`, `displays` and `adaptive`).
 
 **`DeviceControl<Value>`** is where the slider rules live:
 
 - `value` is what the UI shows. A user change sets it at once (optimistic). `deviceValue` is the last value actually read.
 - At most one write is in flight. Changes arriving meanwhile replace a single pending value. A drag therefore sends the first value, then the newest one each time the bus is free, and the queue can never grow. A value equal, after quantization, to the last one written is not sent.
-- When writes stop, and the user is not dragging, the control reads the value back after `settleDelay` (800 ms), so the slider ends up where the monitor actually is.
+- When writes stop, and the user is not dragging, the control reads the value back after `settleDelay` (800 ms; 2 s for the input selector, which `Monitor` builds with a longer delay because a switch takes a moment), so the slider ends up where the monitor actually is.
 - A generation counter is taken when a read is issued. The result is applied only if no change, pending write or drag happened since, so a slow reply cannot overwrite newer intent. The same rule applies to a failed read.
 - A failed write shows a warning on that control only, and the warning stays after the read-back has put the slider back to the device's value, so a rejected change never vanishes silently. Write failures never change the monitor's status: only reads decide that, so one dropped write cannot swap the controls out from under a drag.
 - No write is sent before the first successful read: until then the device's range, and whether it answers at all, are unknown.
@@ -73,22 +74,24 @@ The menu and the main window are two views of the same `MonitorManager` and the 
 ## Concurrency
 
 - **Each monitor's `DDCChannel` is an actor whose executor is its own `DispatchSerialQueue`.** The IOAVService calls are synchronous, and the protocol needs pauses between them, so a transaction (request, pause, reply) runs start to finish with blocking sleeps and **no suspension point**. Actors are reentrant, but nothing can run inside a transaction because it never awaits; and the blocking happens on the channel's own thread, never on the main thread or the Swift concurrency pool.
-- Reading the capabilities string takes about 3 s. It is one transaction per fragment, so a slider write can run between fragments.
+- Reading the capabilities string takes about 3 s, and `Monitor` gives up on it after a 20 s deadline. It is one transaction per fragment, so a slider write can run between fragments.
 - **`CoreAudioOutput`** is an actor on its own queue too: CoreAudio property calls are IPC to the audio server.
 - **State is on the main actor.** Its methods await the hardware actors, so the main thread is free while the bus is busy.
-- **No polling.** Glim reads when a monitor connects, each time the menu opens or the window becomes key (at most once every 2 s per monitor), and after writes settle. Idle CPU is zero.
+- **No polling by default.** Glim reads when a monitor connects, each time the menu opens or the window becomes key (at most once every 2 s per monitor), and after writes settle. With automatic brightness and evening warmth both off, idle CPU is zero. With either on, `AdaptiveController` takes a reading every 2 s (not while the displays sleep, and not while no display uses it).
 - **Timeouts and cancellation.** A DDC transaction cannot be interrupted, so `withDeadline` races it against a timer with a first-wins continuation and cancels whichever side loses. The caller gets `.timedOut` after 5 s. Cancelling the caller cancels the operation and returns at once. Every `DDCChannel` operation checks for cancellation before it touches the bus, so an operation whose caller timed out or went away, still queued behind a stuck one, sends nothing when its turn comes: a write the UI reported as failed can never land later. An overrunning transaction itself keeps its queue until it finishes.
 - **Task ownership.** Each control owns at most one writer task and one reconcile task. Each monitor owns its configuration task, and the manager owns its pending rescan. All of them capture `self` weakly and are cancelled on `invalidate()` or `stop()`.
 
 ### Escape hatches, and why each is sound
 
-There is no `@unchecked Sendable` and no `nonisolated(unsafe)` in the sources. Unsafe or unchecked constructs:
+There is no `@unchecked Sendable` and no `nonisolated(unsafe)` under `Sources/` (checked with grep). Unsafe or unchecked constructs:
 
 | Where | What | Why it is sound |
 | --- | --- | --- |
 | `IOAVService.swift` | `dlsym` plus `unsafeBitCast` to `@convention(c)` types | The function types mirror the C prototypes used by m1ddc and `tools/glim-cli`. Resolving at run time is what allows a graceful failure. |
 | `IOAVService.swift` | `Unmanaged` for the IOAVService CF object | `Create` returns +1, taken once with `takeRetainedValue`. Calls pass it unretained while `self` holds it. |
 | `DisplayServiceNotifier.swift` | `self` as the IOKit refCon, `MainActor.assumeIsolated` in the callback | The notification port's queue is `.main`, so the callback is on the main thread. The refCon holds a +1 reference, released by `stop()` only after the port is destroyed, so a notifier nobody stopped leaks instead of dangling. |
+| `LightSources.swift` | `dlopen` and `dlsym` of the private HID event-system functions (light sensor) and `DisplayServicesGetBrightness`, `unsafeBitCast` to `@convention(c)` types, `Unmanaged<CFTypeRef>` results taken with `takeRetainedValue` | Every symbol is looked up once and the reader is not created if any is missing, so a macOS without them loses that source and Glim still launches. The function types mirror the C signatures; the `Copy`/`Create` functions return +1 objects, taken once. Both readers are only called on the main actor and only read. |
+| `AudioOutput.swift` | `Unmanaged<CFString>?` as the out-parameter of `AudioObjectGetPropertyData` | CoreAudio hands back a +1 string, so `takeRetainedValue` is called once, and only when the call succeeded. |
 | `AppDelegate.swift`, `WindowKeyObserver.swift` | `MainActor.assumeIsolated` in `NotificationCenter` blocks | The observers are registered with `queue: .main`. |
 
 ## Hardware lifecycle
@@ -104,7 +107,7 @@ There is no `@unchecked Sendable` and no `nonisolated(unsafe)` in the sources. U
 
 | Type | From | Meaning |
 | --- | --- | --- |
-| `DDCError` | channel and transport | `noReply`, `writeFailed` / `readFailed` (IOReturn) and `timedOut` are transient. `unsupported(code)`, `refused(code)` (a code outside `DDCChannel.writableCodes`) and `transportUnavailable` are final. |
+| `DDCError` | channel and transport | `noReply`, `writeFailed` / `readFailed` (IOReturn), `serviceUnavailable` (the display's IOAVService could not be opened, probably because it was disconnected) and `timedOut` are transient. `unsupported(code)`, `refused(code)` (a code outside `DDCChannel.writableCodes`) and `transportUnavailable` are final. |
 | `AudioError` | CoreAudio output | `deviceUnavailable`, `notSupported`, or a CoreAudio status. |
 | `ControlFailure` | `DeviceControl` | A message for the UI, plus whether retrying may help. |
 
@@ -119,9 +122,16 @@ A control shows its failure as a warning symbol with the message as its tooltip.
 | `ChannelSafetyTests` | nothing | the write allow-list, operations dropped after a timeout or cancellation, no overlapping transactions (the simulator flags any), the verified timing constants |
 | `DeviceControlTests`, `InputSelectorTests`, `ControlRecoveryTests` | nothing | coalescing, stale reads, reconciliation, drags and abandoned drags, failure handling, timeouts and invalidation, with gated mocks |
 | `MonitorManagerTests`, `LifecycleTests` | nothing | discovery, identity, reconnects, one channel per transport, identical and unidentified monitors, audio association, debouncing |
+| `IdentityAndProfileTests` | nothing | EDID identity keys, manufacturer codes, and what the HP profile says was tested |
 | `DiscoveryTests` | nothing | joining transports to framebuffers, including pairing by elimination |
+| `ColorTests`, `SettleNotificationTests` | nothing | color temperature in kelvin, the HP's preset numbering against the measured fixture, custom colors, and a control reporting once that it has settled |
+| `SceneTests` | nothing | capturing and applying scenes, parts left out, absent and unread displays |
+| `BrightnessCurveTests`, `DayScheduleTests` | nothing | the learned lux-to-brightness curve, and the day and night schedule with its ramps |
+| `AdaptiveControllerTests` | nothing | automatic brightness and warmth with a scripted environment: smoothing, hysteresis, pausing on a change by hand, the lid |
+| `GlimStoreTests` | nothing | scenes, display choices and adaptive settings surviving a relaunch, and unreadable data set aside |
 | `RenderTests` | a GUI session | the menu, the whole window (frame and toolbar included) and the settings, in every state, light and dark, offscreen |
 | `MainWindowTests`, `AppPresenceTests` | a GUI session | one window, launch and reopen, the Dock rule, interactions ended on close, and the window and the menu following each other through their real sliders |
 | `HardwareTests` | an HP E27m G4, `GLIM_HARDWARE_TESTS=1` | the real thing; every write is reversible and restored |
+| `SensorHardwareTests` | a MacBook with the lid open, `GLIM_HARDWARE_TESTS=1` | reads the light sensor and the built-in brightness; writes nothing |
 
 See [development.md](development.md) for how to run each.
