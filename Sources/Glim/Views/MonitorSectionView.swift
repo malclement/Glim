@@ -10,6 +10,7 @@ struct MonitorSectionView: View {
     @AppStorage(Preferences.showColor) private var showColorByDefault = true
     @AppStorage(Preferences.showVolume) private var showVolumeByDefault = true
     @AppStorage(Preferences.showInput) private var showInputByDefault = true
+    @Environment(\.adaptive) private var adaptive
 
     // The display's own choice, else the Settings default.
     private var showContrast: Bool { shows(.contrast, default: showContrastByDefault) }
@@ -35,6 +36,10 @@ struct MonitorSectionView: View {
                 controls
             }
         }
+        // Several monitors each have a "Brightness" slider: group them under
+        // the monitor's name.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(title)
     }
 
     private var header: some View {
@@ -42,6 +47,8 @@ struct MonitorSectionView: View {
             Text(title)
                 .font(.headline)
                 .lineLimit(1)
+                .help(title)
+                .accessibilityAddTraits(.isHeader)
             if monitor.status == .connecting {
                 ProgressView()
                     .controlSize(.mini)
@@ -49,23 +56,22 @@ struct MonitorSectionView: View {
             }
             Spacer(minLength: 0)
             if !monitor.profile.isTested {
-                Image(systemName: "info.circle")
-                    .foregroundStyle(.secondary)
-                    .help("Glim hasn't been tested with this display. Its controls come from the display's own description.")
-                    .accessibilityLabel("Untested display")
+                InfoBadge(symbol: "info.circle", label: "Untested display",
+                          text: "Glim hasn't been tested with this display. Its controls come from the display's own description.")
             }
         }
     }
 
     @ViewBuilder
     private var controls: some View {
-        if monitor.status == .ready, !monitor.hasControls {
-            Text("This display doesn't offer any control Glim supports.")
+        if !monitor.hasControls {
+            Text(monitor.status == .connecting ? "Reading the display…" : "This display doesn't offer any control Glim supports.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         if let brightness = monitor.brightness {
-            LevelRow(title: "Brightness", control: brightness) {
+            LevelRow(title: "Brightness", control: brightness,
+                     spokenSuffix: AccessibilityText.automaticBrightnessSuffix(adaptive?.statuses[monitor.id])) {
                 BrightnessSymbol(monitor: monitor)
             }
         }
@@ -120,6 +126,8 @@ struct NotRespondingView: View {
 /// The brightness row's sun: filled, in the accent color, while automatic
 /// brightness drives it; plain otherwise, or while the user has taken over.
 struct BrightnessSymbol: View {
+    /// An SF Symbol since macOS 12.
+    nonisolated static let pausedSymbol = "sun.max.circle"
     let monitor: Monitor
     @Environment(\.adaptive) private var adaptive
 
@@ -130,7 +138,8 @@ struct BrightnessSymbol: View {
                 .foregroundStyle(Color.accentColor)
                 .help("Brightness: adjusting automatically")
         case .paused?:
-            Image(systemName: "sun.max")
+            // An outlined sun, apart from the plain one of "off".
+            Image(systemName: BrightnessSymbol.pausedSymbol)
                 .help("Brightness: automatic, paused because you set it by hand")
         default:
             Image(systemName: "sun.max")

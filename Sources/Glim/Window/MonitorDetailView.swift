@@ -30,6 +30,11 @@ struct MonitorDetailView: View {
                 }
                 LabeledContent("Profile", value: MonitorText.profile(monitor.profile))
                 LabeledContent("Speakers", value: MonitorText.speakers(of: monitor))
+                if monitor.volume == nil, let reason = AccessibilityText.speakersReason(monitor.audioUnattachedReason) {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Section {
                 HStack {
@@ -133,6 +138,8 @@ private struct MonitorHeader: View {
                 Text(title)
                     .font(.title3.weight(.semibold))
                     .lineLimit(1)
+                    .help(title)
+                    .accessibilityAddTraits(.isHeader)
                 Text(MonitorText.status(monitor.status))
                     .foregroundStyle(.secondary)
             }
@@ -147,6 +154,7 @@ private struct MonitorHeader: View {
                 Label("Untested", systemImage: "info.circle")
                     .foregroundStyle(.secondary)
                     .help("Glim hasn't been tested with this display. Its controls come from the display's own description.")
+                    .accessibilityHint("Glim hasn't been tested with this display. Its controls come from the display's own description.")
             }
         }
         .padding(.vertical, 2)
@@ -183,10 +191,11 @@ private struct MonitorControls: View {
                 Section("Picture") {
                     if let brightness = monitor.brightness {
                         LabeledContent {
-                            LevelSlider(title: "Brightness", control: brightness)
+                            BrightnessSlider(monitor: monitor, control: brightness)
                         } label: {
                             Label { Text("Brightness") } icon: { BrightnessSymbol(monitor: monitor) }
                         }
+                        FailureCaption(failure: brightness.failure)
                     }
                     if let contrast = monitor.contrast {
                         LevelControl(title: "Contrast", symbol: "circle.lefthalf.filled", control: contrast)
@@ -204,9 +213,11 @@ private struct MonitorControls: View {
                         } label: {
                             Label("Temperature", systemImage: "thermometer.medium")
                         }
+                        FailureCaption(failure: temperature.failure)
                     }
                     if let preset = monitor.colorPreset {
                         ColorPresetControl(selector: preset)
+                        FailureCaption(failure: preset.failure)
                     }
                 }
             }
@@ -217,6 +228,11 @@ private struct MonitorControls: View {
             if let volume = monitor.volume {
                 Section("Sound") {
                     VolumeControls(volume: volume, mute: monitor.mute)
+                }
+            } else if let reason = AccessibilityText.speakersReason(monitor.audioUnattachedReason) {
+                Section("Sound") {
+                    Text(reason)
+                        .foregroundStyle(.secondary)
                 }
             }
             if let input = monitor.input {
@@ -239,6 +255,7 @@ private struct LevelControl: View {
         } label: {
             Label(title, systemImage: symbol)
         }
+        FailureCaption(failure: control.failure)
     }
 }
 
@@ -272,6 +289,7 @@ private struct VolumeControls: View {
         } label: {
             Label("Volume", systemImage: speakerSymbol(volume: volume, isMuted: mute?.value == true))
         }
+        FailureCaption(failure: volume.failure)
         if let mute {
             // A warning sits beside the control it concerns, as on the other
             // rows.
@@ -288,6 +306,7 @@ private struct VolumeControls: View {
             } label: {
                 Label("Mute", systemImage: "speaker.slash")
             }
+            FailureCaption(failure: mute.failure)
         }
     }
 }
@@ -321,6 +340,7 @@ private struct InputControl: View {
         } label: {
             Label("Input", systemImage: "cable.connector")
         }
+        FailureCaption(failure: selector.failure)
         if let pending = selector.pendingSelection {
             InputConfirmation(selector: selector, target: pending, isTested: isTested)
         }

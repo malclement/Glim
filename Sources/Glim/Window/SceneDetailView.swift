@@ -8,12 +8,16 @@ struct SceneDetailView: View {
     let manager: MonitorManager
     let scene: DisplayScene
     @State private var name: String
-    @State private var isConfirmingDelete = false
+    /// Asks the window to confirm deleting this scene: the same question the
+    /// sidebar asks.
+    let requestDelete: (DisplayScene) -> Void
 
-    init(store: GlimStore, manager: MonitorManager, scene: DisplayScene) {
+    init(store: GlimStore, manager: MonitorManager, scene: DisplayScene,
+         requestDelete: @escaping (DisplayScene) -> Void = { _ in }) {
         self.store = store
         self.manager = manager
         self.scene = scene
+        self.requestDelete = requestDelete
         _name = State(initialValue: scene.name)
     }
 
@@ -47,7 +51,7 @@ struct SceneDetailView: View {
                 )) {
                     ForEach(DisplayScene.symbols, id: \.self) { symbol in
                         Image(systemName: symbol).tag(symbol)
-                            .accessibilityLabel(symbol)
+                            .accessibilityLabel(DisplayScene.name(ofSymbol: symbol))
                     }
                 }
                 if let digit = store.shortcutDigit(for: scene.id) {
@@ -84,7 +88,7 @@ struct SceneDetailView: View {
                             if let now = entry.now {
                                 Text("Now: \(now)")
                                     .font(.caption)
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                         .multilineTextAlignment(.trailing)
@@ -97,18 +101,17 @@ struct SceneDetailView: View {
                 }
             }
             Section {
-                HStack {
-                    Button("Delete Scene…", role: .destructive) { isConfirmingDelete = true }
-                    Button("Duplicate") { store.duplicateScene(scene.id) }
-                    Spacer()
-                    Button("Save Current Settings") {
-                        store.updateScene(scene.id) { $0.recapture(manager.monitors) }
+                // Two rows when the pane is too narrow for one.
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        manageButtons
+                        Spacer()
+                        applyButtons
                     }
-                    .help("Replace what this scene holds for the connected displays with what they show now")
-                    .disabled(!manager.monitors.contains { DisplayScene.Settings(capturing: $0) != nil })
-                    Button("Apply") { scene.apply(to: manager.monitors) }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(connected.isEmpty)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack { manageButtons }
+                        HStack { applyButtons }
+                    }
                 }
             } footer: {
                 if connected.isEmpty {
@@ -117,11 +120,24 @@ struct SceneDetailView: View {
             }
         }
         .formStyle(.grouped)
-        .confirmationDialog("Delete “\(scene.name)”?", isPresented: $isConfirmingDelete) {
-            Button("Delete Scene", role: .destructive) { store.deleteScene(scene.id) }
-        } message: {
-            Text("The displays keep their current settings.")
+    }
+
+    @ViewBuilder
+    private var manageButtons: some View {
+        Button("Delete Scene…", role: .destructive) { requestDelete(scene) }
+        Button("Duplicate") { store.duplicateScene(scene.id) }
+    }
+
+    @ViewBuilder
+    private var applyButtons: some View {
+        Button("Save Current Settings") {
+            store.updateScene(scene.id) { $0.recapture(manager.monitors) }
         }
+        .help("Replace what this scene holds for the connected displays with what they show now")
+        .disabled(!manager.monitors.contains { DisplayScene.Settings(capturing: $0) != nil })
+        Button("Apply") { scene.apply(to: manager.monitors) }
+            .buttonStyle(.borderedProminent)
+            .disabled(connected.isEmpty)
     }
 
     private func footnote(_ text: String) -> some View {
@@ -148,6 +164,8 @@ private struct SceneHeader: View {
                 Text(scene.name)
                     .font(.title3.weight(.semibold))
                     .lineLimit(1)
+                    .help(scene.name)
+                    .accessibilityAddTraits(.isHeader)
                 Text(isActive ? "Active: the connected displays show it" : "Scene")
                     .foregroundStyle(.secondary)
             }

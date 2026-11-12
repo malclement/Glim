@@ -6,6 +6,9 @@ struct MenuContentView: View {
     let manager: MonitorManager
     @Environment(\.glimStore) private var store
     @AppStorage(Preferences.showScenes) private var showScenes = true
+    /// The most the monitors and scenes may take before they scroll; the
+    /// screen's usable height by default.
+    var maxContentHeight: CGFloat = MenuLayout.screenCap
 
     /// The displays the menu shows: all of them, less those hidden in the
     /// window.
@@ -15,10 +18,12 @@ struct MenuContentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            content
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-                .padding(.bottom, 10)
+            CappedScroll(maxHeight: maxContentHeight) {
+                content
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                    .padding(.bottom, 10)
+            }
             Divider()
                 .padding(.horizontal, 8)
             MenuFooter()
@@ -41,7 +46,11 @@ struct MenuContentView: View {
     private var content: some View {
         switch manager.availability {
         case .unavailable(let reason):
-            MessageView(symbol: "display.trianglebadge.exclamationmark", title: "DDC/CI isn't available", message: reason)
+            VStack(spacing: 8) {
+                MessageView(symbol: "display.trianglebadge.exclamationmark", title: "DDC/CI isn't available", message: reason)
+                CopyDiagnosticsButton(manager: manager).controlSize(.small)
+            }
+            .frame(maxWidth: .infinity)
         case .available:
             if manager.monitors.isEmpty {
                 if manager.isDiscovering {
@@ -51,11 +60,15 @@ struct MenuContentView: View {
                     }
                     .frame(maxWidth: .infinity, minHeight: 44)
                 } else {
-                    MessageView(
-                        symbol: "display",
-                        title: "No external display",
-                        message: "Connect a display over USB-C, DisplayPort or HDMI to control it from here."
-                    )
+                    VStack(spacing: 8) {
+                        MessageView(
+                            symbol: "display",
+                            title: "No external display",
+                            message: "Connect a display over USB-C, DisplayPort or HDMI to control it from here."
+                        )
+                        CopyDiagnosticsButton(manager: manager).controlSize(.small)
+                    }
+                    .frame(maxWidth: .infinity)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 14) {
@@ -93,15 +106,19 @@ private struct SceneMenuSection: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.bottom, 2)
+                .accessibilityAddTraits(.isHeader)
             ForEach(store.scenes) { scene in
                 let isActive = scene.isActive(on: manager.monitors)
                 let digit = store.shortcutDigit(for: scene.id)
+                let isAway = scene.connected(in: manager.monitors).isEmpty
                 MenuRowButton(title: scene.name, shortcut: digit.map { "⌘\($0)" }, isChecked: isActive,
                               symbol: scene.shownSymbol) {
                     scene.apply(to: manager.monitors)
                 }
                 .modifier(SceneShortcut(digit: digit))
-                .disabled(scene.connected(in: manager.monitors).isEmpty)
+                .disabled(isAway)
+                .help(isAway ? AccessibilityText.awayScene : "")
+                .accessibilityHint(isAway ? AccessibilityText.awayScene : "")
                 .accessibilityValue(isActive ? "Active" : "")
             }
         }
@@ -186,6 +203,7 @@ struct MenuRowButton: View {
     var symbol: String?
     let action: () -> Void
     @State private var isHovered = false
+    @FocusState private var isFocused: Bool
     @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
@@ -201,29 +219,42 @@ struct MenuRowButton: View {
                 if let symbol {
                     Image(systemName: symbol)
                         .frame(width: 18)
-                        .foregroundStyle(isHighlighted ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                        .foregroundStyle(isHighlighted ? AnyShapeStyle(Self.selectedText) : AnyShapeStyle(.secondary))
                         .accessibilityHidden(true)
                 }
                 Text(title)
                     .lineLimit(1)
+                    .help(title)
                 Spacer()
                 if let shortcut {
+                    // The system announces a key equivalent itself.
                     Text(shortcut)
-                        .foregroundStyle(isHighlighted ? AnyShapeStyle(.white.opacity(0.85)) : AnyShapeStyle(.tertiary))
+                        .foregroundStyle(isHighlighted ? AnyShapeStyle(Self.selectedText.opacity(0.85)) : AnyShapeStyle(.tertiary))
+                        .accessibilityHidden(true)
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .foregroundStyle(isHighlighted ? AnyShapeStyle(.white) : AnyShapeStyle(isEnabled ? .primary : .tertiary))
+            .foregroundStyle(isHighlighted ? AnyShapeStyle(Self.selectedText) : AnyShapeStyle(isEnabled ? .primary : .tertiary))
             .background {
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(isHighlighted ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear))
+                    .fill(isHighlighted ? AnyShapeStyle(Color(nsColor: .selectedContentBackgroundColor)) : AnyShapeStyle(.clear))
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focused($isFocused)
         .onHover { isHovered = $0 }
+        // The window is reused: a pointer that was on a row when it closed
+        // would leave the row lit when it opens again.
+        .onWindowKeyChange { isKey in
+            if !isKey { isHovered = false }
+        }
     }
 
-    private var isHighlighted: Bool { isHovered && isEnabled }
+    /// The text of a selected menu item, which the system picks to stay
+    /// readable on the selection color.
+    private static var selectedText: Color { Color(nsColor: .selectedMenuItemTextColor) }
+
+    private var isHighlighted: Bool { (isHovered || isFocused) && isEnabled }
 }

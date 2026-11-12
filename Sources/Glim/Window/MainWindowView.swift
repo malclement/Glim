@@ -12,6 +12,9 @@ struct MainWindowView: View {
     let manager: MonitorManager
     @Environment(\.glimStore) private var store
     @State private var selection: SidebarItem?
+    /// The scene waiting for the answer to "Delete?", from the sidebar or the
+    /// detail alike.
+    @State private var sceneToDelete: DisplayScene.ID?
 
     /// The selected scene, if a scene is selected and still exists.
     private var shownScene: DisplayScene? {
@@ -34,7 +37,8 @@ struct MainWindowView: View {
 
     var body: some View {
         NavigationSplitView {
-            SidebarList(manager: manager, selection: Binding(get: { shownItem }, set: { selection = $0 }))
+            SidebarList(manager: manager, selection: Binding(get: { shownItem }, set: { selection = $0 }),
+                        requestDelete: { sceneToDelete = $0 })
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
         } detail: {
             detail
@@ -63,6 +67,21 @@ struct MainWindowView: View {
             }
         }
         .frame(minWidth: 620, minHeight: 440)
+        .confirmationDialog(
+            "Delete “\(store?.scene(sceneToDelete)?.name ?? "")”?",
+            isPresented: Binding(get: { sceneToDelete != nil }, set: { if !$0 { sceneToDelete = nil } })
+        ) {
+            Button("Delete Scene", role: .destructive) {
+                if let id = sceneToDelete { store?.deleteScene(id) }
+                sceneToDelete = nil
+            }
+        } message: {
+            Text("The displays keep their current settings.")
+        }
+        // ⌘N from the menu bar: show the scene it made.
+        .onReceive(NotificationCenter.default.publisher(for: .glimDidAddScene)) { note in
+            if let id = note.object as? DisplayScene.ID { selection = .scene(id) }
+        }
         // A switch staged on the monitor that leaves the pane, picked in the
         // sidebar or replaced by another as monitors come and go, must not be
         // waiting when it comes back. Only the input: a drag in the menu on
@@ -76,7 +95,7 @@ struct MainWindowView: View {
     @ViewBuilder
     private var detail: some View {
         if let scene = shownScene, let store {
-            SceneDetailView(store: store, manager: manager, scene: scene)
+            SceneDetailView(store: store, manager: manager, scene: scene, requestDelete: { sceneToDelete = $0.id })
                 .id(scene.id)
         } else {
             monitorDetail
@@ -115,6 +134,8 @@ enum SidebarItem: Hashable {
 private struct SidebarList: View {
     let manager: MonitorManager
     @Binding var selection: SidebarItem?
+    /// Asks to delete a scene; the window confirms.
+    let requestDelete: (DisplayScene.ID) -> Void
     @Environment(\.glimStore) private var store
 
     var body: some View {
@@ -131,12 +152,12 @@ private struct SidebarList: View {
                 Section("Scenes") {
                     if store.scenes.isEmpty {
                         // Not selectable: it has no tag.
-                        Text("None yet: save one with +")
+                        Text("None yet. Save what your displays show with the + button, then apply it from here or the menu.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .help("Save what your displays show with the + button, then apply it from here or the menu.")
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    ForEach(store.scenes) { scene in
+                    ForEach(Array(store.scenes.enumerated()), id: \.element.id) { index, scene in
                         SceneListRow(scene: scene, isActive: scene.isActive(on: manager.monitors))
                             .tag(SidebarItem.scene(scene.id))
                             .contextMenu {
@@ -145,13 +166,22 @@ private struct SidebarList: View {
                                 Button("Duplicate") {
                                     if let copy = store.duplicateScene(scene.id) { selection = .scene(copy.id) }
                                 }
+                                // Order decides ⌘1 to ⌘9, and dragging is not
+                                // the only way to change it.
+                                Button("Move Up") { store.moveScenes(from: IndexSet(integer: index), to: index - 1) }
+                                    .disabled(index == 0)
+                                Button("Move Down") { store.moveScenes(from: IndexSet(integer: index), to: index + 2) }
+                                    .disabled(index == store.scenes.count - 1)
                                 Divider()
-                                Button("Delete Scene", role: .destructive) { store.deleteScene(scene.id) }
+                                Button("Delete Scene…", role: .destructive) { requestDelete(scene.id) }
                             }
                     }
                     .onMove { store.moveScenes(from: $0, to: $1) }
                 }
             }
+        }
+        .onDeleteCommand {
+            if case .scene(let id) = selection { requestDelete(id) }
         }
     }
 }
@@ -165,6 +195,7 @@ struct SceneListRow: View {
             HStack {
                 Text(scene.name)
                     .lineLimit(1)
+                    .help(scene.name)
                 Spacer(minLength: 4)
                 if isActive {
                     Image(systemName: "checkmark")
@@ -190,6 +221,7 @@ struct MonitorListRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .lineLimit(1)
+                    .help(title)
                 Text(MonitorText.status(monitor.status))
                     .font(.caption)
                     .foregroundStyle(.secondary)

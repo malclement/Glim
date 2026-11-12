@@ -90,10 +90,10 @@ private struct ScheduleSection: View {
             DatePicker("Night starts", selection: minuteBinding(\.nightStarts), displayedComponents: .hourAndMinute)
             if showsLevels {
                 LabeledContent("Day brightness") {
-                    PercentSlider(value: schedule.dayBrightness) { value in update { $0.dayBrightness = value } }
+                    PercentSlider(label: "Day brightness", value: schedule.dayBrightness) { value in update { $0.dayBrightness = value } }
                 }
                 LabeledContent("Night brightness") {
-                    PercentSlider(value: schedule.nightBrightness) { value in update { $0.nightBrightness = value } }
+                    PercentSlider(label: "Night brightness", value: schedule.nightBrightness) { value in update { $0.nightBrightness = value } }
                 }
             }
         }
@@ -113,6 +113,7 @@ private struct ScheduleSection: View {
 
 /// A 0–1 setting as a slider and a percentage.
 private struct PercentSlider: View {
+    let label: String
     let value: Double
     let set: (Double) -> Void
 
@@ -121,10 +122,13 @@ private struct PercentSlider: View {
             Slider(value: Binding(get: { value }, set: { set(($0 * 100).rounded() / 100) }), in: 0.05...1)
                 .controlSize(.small)
                 .frame(minWidth: 140)
+                .accessibilityLabel(label)
+                .accessibilityValue(AccessibilityText.percent(value))
             Text("\(Int((value * 100).rounded()))%")
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: LevelSlider.valueWidth, alignment: .trailing)
+                .accessibilityHidden(true)
         }
     }
 }
@@ -151,12 +155,12 @@ struct EveningWarmthSection: View {
             ))
             if settings.warmsInEvening {
                 LabeledContent("Evening") {
-                    KelvinSlider(kelvin: settings.nightKelvin, range: kelvinRange, step: Double(scale.increment)) { kelvin in
+                    KelvinSlider(label: "Evening temperature", kelvin: settings.nightKelvin, range: kelvinRange, step: Double(scale.increment)) { kelvin in
                         controller.update(monitor.id) { $0.nightKelvin = kelvin }
                     }
                 }
                 LabeledContent("Day") {
-                    KelvinSlider(kelvin: settings.dayKelvin, range: kelvinRange, step: Double(scale.increment)) { kelvin in
+                    KelvinSlider(label: "Day temperature", kelvin: settings.dayKelvin, range: kelvinRange, step: Double(scale.increment)) { kelvin in
                         controller.update(monitor.id) { $0.dayKelvin = kelvin }
                     }
                 }
@@ -175,6 +179,7 @@ struct EveningWarmthSection: View {
 }
 
 private struct KelvinSlider: View {
+    let label: String
     let kelvin: Int
     let range: ClosedRange<Double>
     let step: Double
@@ -201,10 +206,13 @@ private struct KelvinSlider: View {
                    })
                 .controlSize(.small)
                 .frame(minWidth: 140)
+                .accessibilityLabel(label)
+                .accessibilityValue(AccessibilityText.kelvin(Int(dragging ?? Double(kelvin))))
             Text("\(Int(dragging ?? Double(kelvin))) K")
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: LevelSlider.valueWidth, alignment: .trailing)
+                .accessibilityHidden(true)
         }
     }
 }
@@ -218,6 +226,7 @@ struct CurveView: View {
     let reading: Double?
     /// The display's brightness now, 0 to 1.
     let brightness: Double?
+    @Environment(\.colorSchemeContrast) private var contrast
 
     private var xRange: ClosedRange<Double> {
         source == .lightSensor ? 0...BrightnessCurve.lightReading(lux: 10_000) : 0...1
@@ -239,6 +248,10 @@ struct CurveView: View {
         let curve = self.curve
         let reading = self.reading
         let brightness = self.brightness
+        let gridOpacity = ContrastStyle.gridOpacity(contrast)
+        let spoken = [AdaptiveText.curveDescription(curve, source: source),
+                      AccessibilityText.curveReading(source: source, reading: reading, brightness: brightness)]
+            .filter { !$0.isEmpty }.joined(separator: ". ")
         return VStack(spacing: 4) {
             Canvas { context, size in
                 let span = xRange.upperBound - xRange.lowerBound
@@ -255,7 +268,7 @@ struct CurveView: View {
                     grid.move(to: point(xRange.lowerBound, level))
                     grid.addLine(to: point(xRange.upperBound, level))
                 }
-                context.stroke(grid, with: .color(.secondary.opacity(0.25)), lineWidth: 0.5)
+                context.stroke(grid, with: .color(.secondary.opacity(gridOpacity)), lineWidth: 0.5)
                 // The curve.
                 var line = Path()
                 let samples = 80
@@ -290,7 +303,7 @@ struct CurveView: View {
         }
         .accessibilityElement()
         .accessibilityLabel("Brightness curve")
-        .accessibilityValue(AdaptiveText.curveDescription(curve, source: source))
+        .accessibilityValue(spoken)
     }
 }
 

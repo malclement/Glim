@@ -17,6 +17,8 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     /// Tall enough for every row of the HP's detail, diagnostics included.
     static let defaultContentSize = NSSize(width: 760, height: 740)
 
+    static let identifier = NSUserInterfaceItemIdentifier("main")
+
     private let manager: MonitorManager
     /// nil in tests that don't need scenes or display names.
     let store: GlimStore?
@@ -84,7 +86,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         window.contentViewController = controller
         window.setContentSize(Self.defaultContentSize)
         window.title = "Glim"
-        window.identifier = NSUserInterfaceItemIdentifier("main")
+        window.identifier = Self.identifier
         window.isReleasedWhenClosed = false
         // Glim decides at launch whether to show the window; macOS must not
         // bring it back by itself, for instance at login.
