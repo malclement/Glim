@@ -6,7 +6,7 @@ This is the complete catalog of what a host can change or read on this monitor o
 
 1. **Capabilities string.** The monitor's own self-description ([`data/capabilities.txt`](../data/capabilities.txt)).
 2. **Full GET scan of all 256 codes.** Every code answered with either `ok` (49 codes) or `unsupported` (207). None failed to reply, so the set of plainly readable codes is complete ([`data/scan-all.txt`](../data/scan-all.txt)).
-3. **Set, read back, restore** on every standard code that is safe to write, with diffs of all 49 readable codes ([`data/write-tests-2026-11-04.md`](../data/write-tests-2026-11-04.md)).
+3. **Set, read back, restore** on every standard code that is safe to write, with diffs of all 49 readable codes ([`data/write-tests-2026-11-04.md`](../data/write-tests-2026-11-04.md)), and a second round of read-back probes ([`data/safe-probes-2026-11-12.md`](../data/safe-probes-2026-11-12.md)).
 4. **Standards.** VESA MCCS 2.2a and DDC/CI 1.1 for the standard codes.
 5. **HP's own control tables**, read out of HP Display Center 2.4.4.7 (Windows). The app was taken apart, not run. Its tables give every HP feature name, VCP code, sub-code and value name, and they are the only source for the HP-specific codes below. The tables themselves are HP's and are not included in this repository.
 
@@ -30,7 +30,7 @@ This is the complete catalog of what a host can change or read on this monitor o
 | `12` | **Contrast** | 0–100 | 100 | ✅ | Factory default 100. |
 | `16` `18` `1A` | **Red / green / blue gain** | 0–255 | 255 | ✅ | Range is 0–255 here, not 0–100. **Any gain write switches the preset to Custom RGB** (0x14 reads 15). Restoring the gains doesn't switch it back; `set 14 5` does. |
 | `6C` `6E` `70` | **Red / green / blue black level** | 0–255 | 128 | ✅ | 128 is the midpoint. Writing it doesn't affect the preset. |
-| `0C` | **Color temperature** | 0–126 | 70 | ✅ | Kelvin = 3000 + value × 50 (the step size comes from `0B`). Any value is accepted: 70 = 6500 K, 126 = 9300 K, 55 = 5750 K. 0 reads as Custom. |
+| `0C` | **Color temperature** | 0–126 | 70 | ✅ | Kelvin = 3000 + value × 50 (the step size comes from `0B`). Any value is accepted: 70 = 6500 K, 126 = 9300 K, 55 = 5750 K. 0 reads as Custom. A value other than 0, 40, 70 or 126 puts the monitor in a **custom temperature state** that preset writes don't leave; see [§ 0x14 mapping](#0x14-color-preset-mapping). A lone write from sRGB or native leaves that preset. |
 | `0B` | Color temperature step | — | 50 | 👁 | Read-only: 50 K per step. |
 | `14` | **Color preset** (MCCS) | write 01–0D | reads 8 | ✅ | Writes use MCCS values; reads come back in HP's own numbering. See [§ 0x14 mapping](#0x14-color-preset-mapping). **Factory setting: write 5 (6500 K).** |
 | `DC`/`00` | **Color preset** (HP) | 00 Native, 12 Night, 13 Warm, 14 Cool, 15 Neutral, 1D HP Enhance+, 1E Custom RGB | ? | 📄 | HP's native preset control. Needs the HP sub-code protocol (§ 6). Low Blue Light and Reading appear in the OSD but are **not** in this model's capabilities string, so DDC can't select them. |
@@ -38,7 +38,7 @@ This is the complete catalog of what a host can change or read on this monitor o
 | `2E` | **Black Stretch** (MCCS "gray scale expansion") | SL 0 Off, 1 Low, 2 Medium, 3 High | 0 | ✅ | Stores 0–3 and changes no other code. Per MCCS 2.2a, SH would hold a near-white level, which this monitor doesn't list. The visible effect wasn't observed. |
 | `EA` | **Dynamic contrast** | 0 off, 1 on | 0 | 👁📄 | HP flat code. Not written. |
 | `EB`/`00` | **Response time** (overdrive) | levels 01–05 | ? | 📄 | HP sub-code. HP's level 00 (Off) isn't offered on this model. |
-| `86` | **Scaling** | 02 fill to aspect ratio, 05 fill to screen | 2 | ✅ ignored | Every write is ignored at the native 2560×1440 input. ⚠️ Probably only applies to non-native timings (open item). |
+| `86` | **Scaling** | 02 fill to aspect ratio, 05 fill to screen | 2 | ✅ | Ignored at the native 2560×1440 input. At 1920×1200 @ 60 Hz, 05 and 02 are stored and read back, and 01 (not listed) is ignored. The visible effect wasn't observed. |
 | `DA` | Scan mode | 0 normal, 1 underscan, 2 overscan | 0 | 👁 | Not in the capabilities string; not written. |
 | `E1`/`4E` | **Full-screen test pattern** | 00 black, 01 50% grey, 02 white, 03 red, 04 green, 05 blue, FF (probably off) | — | 📄⚠️ | Fills the screen. |
 | `E1`/`4C` | User burn-in mode | 0/1 | ? | 📄 | |
@@ -64,7 +64,9 @@ Measured on this unit; each reading was stable over three reads.
 **How to read this table**
 
 - The read-back is HP's internal preset index, not the MCCS value. The agent's reading of HP's tables (*read 8 = 9300 K*) is wrong for this monitor; read 8 is 6500 K, as the 0x0C reading confirms.
-- **0x0C is the reliable read-out for Kelvin.** Setting 0x0C directly also moves the 0x14 read-back: 40 reads 5, 55 reads 8, 100 reads 2, 0 reads 15.
+- **0x0C is the reliable read-out for Kelvin.** Setting 0x0C directly also moves the 0x14 read-back, in three buckets: 1–40 reads 5, 41–70 reads 8, 71–126 reads 2, and 0 reads 15.
+- ✅ **A hand-set temperature sticks.** After a 0x0C write other than 0, 40, 70 or 126, 0x0C keeps reading that value whatever is then written to 0x14, though the 0x14 read-back still changes: from 0x0C = 55, `14 ← 05` reads (8, 55), not (8, 70), and `14 ← 01` reads (1, 55), not (1, 0). **So `14 ← 05` is not a reset from there.** Writing 0x0C to 40, 70, 126 or 0 ends the state, and the table above holds again. What the screen shows meanwhile is unknown (open item).
+- ⚠️ Once, at the start of the 2026-11-12 session, 0x0C read 70 under every preset until the first 0x0C write. Hand-setting 70 did not reproduce it.
 - Matching the read values to OSD names (Warm, Neutral, Cool, Native, sRGB, Night, HP Enhance+, Custom) needs someone at the OSD. That is an open item.
 
 ## 2. Input
@@ -84,7 +86,7 @@ Measured on this unit; each reading was stable over three reads.
 | Code | Control | Values | Now | Status | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `62` | **Speaker volume** | 0–100 | 30 | ✅ **read-only mirror** | DDC writes are accepted but ignored. The value **follows the USB Audio output volume** set from the Mac (non-linear, follows the dB curve): 0.25 → 9, 0.5721 (−18.03 dB) → 30, 0.89 → 77. To change the level, use CoreAudio (`tools/macos-probe/hpvolume`). |
-| `8D` | **Mute** | SL 1 mute, 2 unmute | 2 | ✅ | The max field says screen blanking (SH) is **not** supported. |
+| `8D` | **Mute** | SL 1 mute, 2 unmute | 2 | ✅ | The max field says screen blanking (SH) is **not** supported. It does not follow the USB Audio mute, but it reads 1 by itself while the USB level is at its floor (−74 dB, where `62` reads 0). |
 | `E1`/`6B` | **Audio preset** | 00 Music, 01 Movie, 02 Voice | ? | 📄 | |
 | `E1`/`6C` | **Mic noise cancellation** | 0 off, 1 on | ? | 📄 | |
 | `E1`/`73` | Audio menu | 0 disabled, 1 enabled | ? | 📄 | |
@@ -100,7 +102,7 @@ Measured on this unit; each reading was stable over three reads.
 | `E1`/`36` | **Power mode** | 00 Power Saver, 01 Performance | ? | 📄 | Performance keeps USB powered while the monitor sleeps. |
 | `E1`/`0C` | Power Delivery | listed value: 0x20 | ? | 📄❓ | HP's table has 00/01; 0x20 is unexplained. |
 | `E8`/`18` | **Power-button lock** | 00 locked, 01 enabled | ? | 📄⚠️ | Recover with `hp-set E8 18 1`, or hold the power button for 10 s. |
-| `EF` + `F0` | Power-consumption log | EF selects slot 1–5; F0 holds the value | EF 0x0505, F0 4900 | 👁📄 | ⚠️ Units unknown; 4900 might be 49.00 W. |
+| `EF` + `F0` | Power-consumption log | EF selects slot 1–5; F0 holds the value | EF 0x0505, F0 4900 | 👁📄 | ⚠️ Units unknown; 4900 might be 49.00 W. Not a live reading: F0 stayed 4900 for a minute across brightness 0, 50 and 100. |
 
 ## 5. OSD (the monitor's menu)
 
