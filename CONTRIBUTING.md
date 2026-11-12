@@ -2,6 +2,8 @@
 
 Thanks for helping. Glim is small on purpose: a native menu bar app that talks to monitors over DDC/CI. The bar for changes is that they are correct on real hardware and safe for it.
 
+Everyone taking part is expected to follow the [code of conduct](CODE_OF_CONDUCT.md). Security problems go through [private reporting](SECURITY.md), not public issues.
+
 ## Setting up
 
 You need a Mac with Apple silicon on macOS 14 or later, and Swift 6.0 or later (`Package.swift` sets tools-version 6.0; Glim is developed with 6.1.2, and CI uses the Xcode pinned in `.github/workflows/ci.yml`); the Xcode Command Line Tools are enough. Then:
