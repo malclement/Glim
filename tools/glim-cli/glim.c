@@ -4,7 +4,7 @@
 // coprocessor (the same path m1ddc, MonitorControl and BetterDisplay use).
 // The monitor is I2C slave 0x37; host frames are sent with sub-address 0x51.
 //
-// Build:  make            (or: clang -O2 -Wall -o glim src/glim.c -framework IOKit -framework CoreFoundation)
+// Build:  make glim       (from the repository root; source is tools/glim-cli/glim.c)
 // Usage:  glim help
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
@@ -234,17 +234,27 @@ static int cmd_timing(IOAVServiceRef sv) {
     return 1;
 }
 
-static int cmd_save(IOAVServiceRef sv) {
+static int cmd_save(IOAVServiceRef sv, int force) {
+    if (!force) {
+        fprintf(stderr, "save (op-code 0x0C) writes the monitor's current settings to its memory. Re-run with --force.\n");
+        return 2;
+    }
     uint8_t q[1] = {0x0C};
     if (!ddc_send(sv, q, 1)) { fprintf(stderr, "write failed\n"); return 1; }
     printf("save-current-settings sent\n");
     return 0;
 }
 
-static int cmd_raw(IOAVServiceRef sv, int argc, char **argv, int expect_reply) {
+static int cmd_raw(IOAVServiceRef sv, int argc, char **argv, int expect_reply, int force) {
     uint8_t q[32];
     int n = 0;
     for (int i = 0; i < argc && n < 30; i++) q[n++] = (uint8_t)strtol(argv[i], NULL, 16);
+    if (n == 0) { fprintf(stderr, "raw needs at least the op-code byte\n"); return 2; }
+    // Only the read-only op-codes go out without --force: VCP get, timing request, capabilities request.
+    if (q[0] != 0x01 && q[0] != 0x07 && q[0] != 0xF3 && !force) {
+        fprintf(stderr, "op-code 0x%02X may write to the monitor. Re-run with --force (read-only: 01 07 F3).\n", q[0]);
+        return 2;
+    }
     int saved = verbose; verbose = 1;
     ddc_send(sv, q, n);
     if (expect_reply) {
@@ -310,9 +320,10 @@ static void usage(void) {
          "  glim get <code>                read one VCP code (hex like 10, or a name like brightness)\n"
          "  glim set <code> <value>        write one VCP code, then read it back\n"
          "  glim timing                    DDC/CI timing report (sync polarity, frequencies)\n"
-         "  glim save                      DDC/CI 'save current settings' (0x0C)\n"
+         "  glim save                      DDC/CI 'save current settings' (0x0C), needs --force\n"
          "  glim raw <hex bytes...>        send an arbitrary DDC/CI payload and print the reply\n"
          "  glim raw-send <hex bytes...>   send an arbitrary payload, don't read a reply\n"
+         "                                 (raw and raw-send need --force unless the first byte is 01, 07 or F3)\n"
          "\n"
          "HP sub-coded vendor codes (UNTESTED, all need --force — even reads issue a Set):\n"
          "  glim --force hp-get <code> <sub>          e.g. hp-get E1 0F   (auto-sleep)\n"
@@ -322,7 +333,8 @@ static void usage(void) {
          "options (before the command):\n"
          "  -d N        use external display N (1-based, default 1)\n"
          "  -v          hex-dump every frame on stderr\n"
-         "  --force     allow writes to codes that can blank/unreach the monitor (04 60 CA D6 DC E0-FF)\n"
+         "  --force     allow writes to codes that can blank/unreach the monitor (04 60 CA D6 DC E0-FF),\n"
+         "              and for save, and for raw/raw-send with any op-code other than 01 07 F3\n"
          "  --no-verify don't read back after set\n"
          "\n"
          "names: brightness contrast red green blue red-black green-black blue-black color-preset\n"
@@ -357,9 +369,9 @@ int main(int argc, char **argv) {
     if (!strcmp(cmd, "caps")) return cmd_caps(sv);
     if (!strcmp(cmd, "scan")) return cmd_scan(sv, i < argc && !strcmp(argv[i], "--all"));
     if (!strcmp(cmd, "timing")) return cmd_timing(sv);
-    if (!strcmp(cmd, "save")) return cmd_save(sv);
-    if (!strcmp(cmd, "raw")) return cmd_raw(sv, argc - i, argv + i, 1);
-    if (!strcmp(cmd, "raw-send")) return cmd_raw(sv, argc - i, argv + i, 0);
+    if (!strcmp(cmd, "save")) return cmd_save(sv, force);
+    if (!strcmp(cmd, "raw")) return cmd_raw(sv, argc - i, argv + i, 1, force);
+    if (!strcmp(cmd, "raw-send")) return cmd_raw(sv, argc - i, argv + i, 0, force);
     if (!strncmp(cmd, "hp-", 3)) {
         int need = !strcmp(cmd, "hp-set") ? 3 : 2;
         if (argc - i < need) { usage(); return 2; }

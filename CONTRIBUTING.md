@@ -4,7 +4,7 @@ Thanks for helping. Glim is small on purpose: a native menu bar app that talks t
 
 ## Setting up
 
-You need a Mac with Apple silicon on macOS 14 or later, and Swift 6.1 or later; the Xcode Command Line Tools are enough. Then:
+You need a Mac with Apple silicon on macOS 14 or later, and Swift 6.0 or later (`Package.swift` sets tools-version 6.0; Glim is developed with 6.1.2, and CI uses the Xcode pinned in `.github/workflows/ci.yml`); the Xcode Command Line Tools are enough. Then:
 
 ```sh
 make test   # a few seconds, no monitor needed
@@ -33,7 +33,7 @@ make run    # builds dist/Glim.app and opens it
 The most useful contribution, and the one that needs the most care: a wrong write can blank a monitor, lock it out of DDC/CI, or reset its settings.
 
 1. Follow [Adding a monitor safely](docs/protocol.md#adding-a-monitor-safely): read before you write, write only standard reversible codes, restore what you change, and never send undocumented or vendor codes to see what happens.
-2. Add a `MonitorProfile` in `Sources/GlimCore/Model/MonitorProfile.swift` with only the controls you verified, and match it on the EDID manufacturer and product code.
+2. Add a `MonitorProfile` in `Sources/GlimCore/Model/MonitorProfile.swift` with only the controls you verified, and match it on the EDID manufacturer and product code. Also add it to the private `knownProfiles` array in the same file; without that entry nothing ever selects it.
 3. Add the monitor's capabilities string as a test fixture, plus a test that the profile matches.
 4. In the pull request, list each control and how you verified it.
 

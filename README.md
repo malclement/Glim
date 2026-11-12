@@ -54,7 +54,7 @@ The Xcode Command Line Tools are enough. [docs/development.md](docs/development.
 ## Known limitations
 
 - **Input switching hasn't been tried on the hardware yet.** Switching to a port with nothing connected blanks the screen until you press the monitor's input button. That is why the menu asks first.
-- Changes made with the monitor's own buttons show up the next time you open the menu or bring the window forward; Glim doesn't poll.
+- Changes made with the monitor's own buttons show up the next time you open the menu or bring the window forward; Glim doesn't poll, unless automatic brightness or evening warmth is on (see [architecture](docs/architecture.md#concurrency)).
 - Glim uses a private macOS interface for DDC/CI, as MonitorControl, BetterDisplay and m1ddc do. A macOS update could break it; Glim then says DDC/CI is unavailable.
 - Don't run another DDC/CI tool at the same time: their commands can collide on the bus.
 - With two identical monitors, Glim can't tell which USB speakers belong to which, so it offers no volume control for either.
@@ -66,7 +66,7 @@ The Xcode Command Line Tools are enough. [docs/development.md](docs/development.
 | --- | --- |
 | The menu says **Not responding** | The monitor may be asleep or showing another input. Otherwise DDC/CI may be off in its menu (HP: **Management › DDC/CI**). Then choose **Try Again**. |
 | No volume slider | Check that the monitor's USB is connected (USB-C on the HP). Glim's window shows which speakers it found, under **Display › Speakers**. |
-| A control is missing | Glim only shows controls the monitor answers for. **Settings › General** can also hide contrast, volume and input from the menu; the window always shows them. |
+| A control is missing | Glim only shows controls the monitor answers for. **Settings › General** can also hide contrast, color, volume, input and scenes from the menu; the window always shows them. |
 | Something else | **Copy Diagnostics** in Glim's window, and attach the result to an [issue](https://github.com/malclement/Glim/issues). Serial numbers are left out. |
 
 ## How it works

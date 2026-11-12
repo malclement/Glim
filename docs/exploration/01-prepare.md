@@ -22,7 +22,7 @@ make probes   # the read-only macOS probes in tools/macos-probe
 
 | Tool | What it does | Writes anything? |
 | --- | --- | --- |
-| `./glim` | DDC/CI: capabilities, get, set, scan, timing, raw frames | `set`, `save` and `raw` do |
+| `./glim` | DDC/CI: capabilities, get, set, scan, timing, raw frames | `set`, `save`, `raw`, `raw-send` and `hp-set` do. `hp-get` and `hp-string` begin with a Set, so they write too |
 | `tools/macos-probe/displayprobe` | macOS's view of each display: identity, modes, gamma, colour profile, HDR, software brightness | no |
 | `tools/macos-probe/edidprobe` | decodes the EDID the Mac read at connection | no |
 | `tools/macos-probe/audioprobe "<name>"` | CoreAudio devices and which volume and mute controls are settable | no |
@@ -35,11 +35,15 @@ make probes   # the read-only macOS probes in tools/macos-probe
 
 `./glim help` lists every command. The options go before the command: `-d N` picks external display N, `-v` hex-dumps every frame, `--force` allows the hazardous writes, and `--no-verify` skips the read-back after `set`.
 
+`--force` is required for the hazardous codes (04, 60, CA, D6, DC, E0–FF), for `save`, for `hp-get`, `hp-set` and `hp-string`, and for `raw` and `raw-send` unless the first byte is a read-only op-code (01 get, 07 timing, F3 capabilities).
+
+Numbers are not written the same way everywhere. The VALUE of `set` is decimal, or hex with a `0x` prefix. Codes, and the sub-code and value of `hp-set`, are bare hex: `./glim set 10 50` writes 50 decimal to code 0x10, and `hp-set E1 0F 0` uses hex throughout.
+
 ## Before you start
 
 1. **Quit every other DDC/CI client**, including Glim itself (rule 6 in the [README](README.md)):
    ```sh
-   pgrep -l -i -E 'glim|monitorcontrol|betterdisplay|lunar|ddc'
+   ps axo pid,comm | grep -i -E 'glim|monitorcontrol|betterdisplay|lunar|ddc' | grep -v grep
    ```
 2. **Connect only the monitor under test.** `glim` numbers external displays in enumeration order, not by identity, so with two connected `-d 1` may not be the one you think. Glim the app matches by EDID; the CLI does not.
 3. **Check that DDC/CI answers:**
@@ -69,7 +73,7 @@ Write down:
 
 These go at the top of the catalog.
 
-Also find the monitor's **USB vendor ID**, for phase 5. Look for a hub or audio device with the monitor's name:
+Also find the monitor's **USB vendor ID**, for phase 5. `usbdescprobe` and `hidprobe` read it with `strtol(…, 0)`, so write it with a `0x` prefix (`0x03f0`); a bare `03f0` is read as octal. Look for a hub or audio device with the monitor's name:
 
 ```sh
 system_profiler SPUSBHostDataType | grep -B2 -A8 -i '<model name or brand>'

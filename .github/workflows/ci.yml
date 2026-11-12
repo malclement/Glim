@@ -91,6 +91,13 @@ jobs:
       - name: Build and test
         run: make check
 
+      # The C research CLI and the macOS probes are not part of the Swift
+      # package; compile them (never run them) so they cannot rot unnoticed.
+      - name: Build the research CLI and probes
+        run: |
+          make glim
+          make probes
+
       - name: Build the DMG (ad-hoc signed)
         run: make dmg
 

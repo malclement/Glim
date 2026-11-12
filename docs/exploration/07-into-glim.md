@@ -1,12 +1,12 @@
 # 7. Into Glim
 
-Without a profile, a monitor already gets Glim's generic support: brightness and contrast if they answer a read, plus the inputs and DDC/CI volume its capabilities string lists, all marked untested. A profile replaces that with exactly what phase 4 verified.
+Without a profile, a monitor already gets Glim's generic support: brightness and contrast if they answer a read, plus the inputs, DDC/CI volume, color temperature and color presets its capabilities string lists and that answer, all marked untested. A profile replaces that with exactly what phase 4 verified.
 
 ## If you don't write code
 
 Open a **Monitor report** issue (the template is in `.github/ISSUE_TEMPLATE/monitor_report.md`). Attach:
 - the table of what works in Glim and what doesn't;
-- the report from **Copy Diagnostics** in Glim's window, which contains the capabilities string and leaves out serial numbers;
+- the report from **Copy Diagnostics** in Glim's window, which leaves out serial numbers. It contains the capabilities string only for a monitor without a profile;
 - if you did phases 2–4, the files from `data/<vendor>-<model>/` and the catalog.
 
 ## If you do
@@ -24,6 +24,7 @@ Open a **Monitor report** issue (the template is in `.github/ISSUE_TEMPLATE/moni
    - Inputs: the values the caps list, with the names printed on the monitor's ports.
    - Set `ddcHelp` to where the DDC/CI switch lives in this monitor's menu.
    - Add each quirk to the profile's comment, with its evidence (the "stored differently" mappings, ignored codes, coupled codes).
+   - Add the profile to the private `knownProfiles` array in the same file, with its match on `vendorID` and `productID`. Defining the profile is not enough: `MonitorProfile.known(for:)` only looks in that array.
 4. **The write allow-list.** `DDCChannel.writableCodes` decides what Glim may ever write. A new control type (colour, sharpness and so on) is added there deliberately, only for codes in the safe tier.
 5. **Hardware tests.** `Tests/GlimCoreTests/HardwareTests.swift` targets the HP. Give a new model its own suite, gated by `GLIM_HARDWARE_TESTS`, that:
    - checks discovery and identity;

@@ -41,11 +41,12 @@ For each monitor, create `data/<vendor>-<model>/`, for example `data/dell-u2723q
 | `capabilities.txt` | phase 2, `glim caps` |
 | `scan-all.txt` | phase 2, `glim scan --all`: the baseline |
 | `frames.txt` | phase 2, `glim -v` captures; becomes a test fixture in phase 7 |
+| `baseline.txt` | phase 2, from `scan-all.txt`: `0xNN cur=V` for every readable code; what every write test diffs against |
 | `timing.txt` | phase 2, `glim timing` |
 | `write-tests-<date>.md` | phase 4, from [templates/write-test-log.md](templates/write-test-log.md) |
 | `macos.md` | phase 5 findings |
 
-The catalog itself goes in `docs/controls-<vendor>-<model>.md`, from [templates/controls-catalog.md](templates/controls-catalog.md). The HP's is `docs/controls.md`, which predates this convention.
+The catalog itself goes in `docs/controls-<vendor>-<model>.md`, from [templates/controls-catalog.md](templates/controls-catalog.md). The HP's is `docs/controls.md`, which predates this convention. So do the HP's own data files, which live flat in `data/` instead of in a per-monitor folder.
 
 ## Status markers
 

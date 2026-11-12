@@ -3,7 +3,7 @@
 ## Requirements
 
 - A Mac with Apple silicon, on macOS 14 or later. DDC/CI goes through an interface Intel Macs don't have.
-- Swift 6.1 or later. The Xcode Command Line Tools are enough (`xcode-select --install`), and Xcode is optional: open `Package.swift` to work in it.
+- Swift 6.0 or later (`Package.swift` says tools-version 6.0). Glim is developed with 6.1.2, and CI builds with the Xcode pinned in `.github/workflows/ci.yml` (26.3). The Xcode Command Line Tools are enough (`xcode-select --install`), and Xcode is optional: open `Package.swift` to work in it.
 - For the hardware tests, an HP E27m G4 connected over USB-C.
 
 ## Common tasks
@@ -26,7 +26,10 @@ make help            # everything else
 | `Sources/GlimCore/Transport` | IOAVService binding, IORegistry discovery, IOKit notifications |
 | `Sources/GlimCore/Audio` | The monitor's USB Audio volume and mute, through CoreAudio |
 | `Sources/GlimCore/State`, `Model` | Monitors, controls, profiles, the manager |
-| `Sources/Glim` | The SwiftUI app |
+| `Sources/GlimCore/Adaptive` | Automatic brightness and evening warmth: the controller, the brightness curve, the light-sensor and built-in-display readers |
+| `Sources/GlimCore/Scenes` | `DisplayScene`, named sets of brightness, contrast and color |
+| `Sources/GlimCore/Support` | `withDeadline` and logging |
+| `Sources/Glim` | The SwiftUI app, including `GlimStore` (scenes and per-display choices in `UserDefaults`) |
 | `Tests/GlimCoreTests` | Protocol, channel, state and hardware tests; the captured fixtures |
 | `Tests/GlimAppTests` | Offscreen renders of every view state |
 | `Tests/GlimTestSupport` | Simulated displays and mocks shared by both suites |
@@ -80,4 +83,4 @@ Filter on `process`: `swift test` logs under the same subsystem.
 
 ## The research tools
 
-`make glim` builds `./glim`, the C CLI that the reverse engineering used: `glim caps`, `glim scan --all`, `glim -v get 10`. It is the quickest way to see what a monitor answers. It refuses writes that can blank the screen or lock the monitor out unless given `--force`; read [controls.md](controls.md) before using that. `make probes` builds the read-only macOS probes in `tools/macos-probe`.
+`make glim` builds `./glim`, the C CLI that the reverse engineering used: `glim caps`, `glim scan --all`, `glim -v get 10`. It is the quickest way to see what a monitor answers. It refuses writes that can blank the screen or lock the monitor out unless given `--force`. The same goes for `save`, and for `raw` and `raw-send` unless the first byte is a read (01, 07 or F3); read [controls.md](controls.md) before using that. `make probes` builds the read-only macOS probes in `tools/macos-probe`.

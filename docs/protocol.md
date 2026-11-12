@@ -77,7 +77,9 @@ Writes reach `DDCChannel.write` from these places only: the brightness, contrast
 | Attempts per Get | 4 | ✅ shifted reads are common (below) |
 | Attempts per capabilities fragment | 6 | ✅ |
 | Reopen the IOAVService | after 3 consecutive transport failures, or 2 Gets in a row with no valid reply | ⚠️ for a service gone stale across sleep; not observed |
+| Read-back after writes stop | 800 ms for sliders and pickers; 2 s for the input selector, because a switch takes a moment and the monitor may go quiet | defensive; input switching is untested on hardware |
 | Timeout per control operation | 5 s; an operation whose caller timed out or was cancelled is dropped before it reaches the bus | defensive; no hang observed |
+| Deadline for the whole capabilities read | 20 s (`Monitor`); the string normally takes about 3 s | defensive |
 | Capabilities read that fails partway | what arrived is kept and parsed, as `glim caps` does | ✅ the parser copes with a truncated string |
 
 Each transaction (request, pause, reply) runs to completion on the monitor's own serial queue, so two transactions never interleave on the bus.

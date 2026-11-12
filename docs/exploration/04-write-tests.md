@@ -8,7 +8,7 @@ This phase turns 👁 and 📄 into ✅. Every write follows the same loop: snap
 | --- | --- | --- |
 | **Safe** | 10 brightness · 12 contrast · 16 18 1A RGB gain · 6C 6E 70 black level · 87 sharpness · 0C colour temperature · 14 colour preset · 2E gray-scale expansion · 8D mute · CC OSD language | Write freely within the range and the caps values, then restore |
 | **Caution** | 05 06 08 restore brightness/contrast, geometry, colour · CA OSD lock · 86 scaling · 62 volume | Reversible, but changes several codes or the OSD. Read the notes below first |
-| **Hazard ⚠️** | 60 input · D6 power · 04 restore all factory defaults · the `save` command (op-code 0C) · DC and 0xE0–0xFF vendor codes | Only with the owner's agreement, someone at the monitor, and the physical recovery known. `glim` refuses these without `--force` |
+| **Hazard ⚠️** | 60 input · D6 power · 04 restore all factory defaults · the `save` command (op-code 0C) · DC and 0xE0–0xFF vendor codes · `raw` and `raw-send` frames that are not reads | Only with the owner's agreement, someone at the monitor, and the physical recovery known. `glim` refuses these without `--force`. Only `raw` frames starting with 01 (get), 07 (timing) or F3 (capabilities) go out without it |
 | **Never** | any code not documented for this model | Don't write it at all (rule 3) |
 
 What can go wrong with the hazard tier, as seen or documented on the HP:
@@ -23,7 +23,7 @@ What can go wrong with the hazard tier, as seen or documented on the HP:
 
 ## Before the first write
 
-1. Re-check the baseline: `./glim scan > /tmp/now.txt` and diff it against `$M/scan-all.txt`. Only counters such as 0xC0, usage hours, may differ.
+1. Re-check the baseline: `./glim scan | awk '{print $1, $4}' | diff $M/baseline.txt -`. Only counters such as 0xC0, usage hours, may differ. (Plain `scan` prints only the readable codes, so do not diff it against `scan-all.txt`, which also lists the unsupported ones.)
 2. Write down the current value of every code you will touch.
 3. Open a log from [templates/write-test-log.md](templates/write-test-log.md).
 
@@ -65,7 +65,7 @@ Side effects are why the full-scan diff is not optional. A read-back of the writ
 ## Notes on the caution tier
 
 - **05, 06, 08** are one-shot actions: write 1. Diff afterwards, because they reveal factory defaults. 05 took the HP's brightness from 100 to 80, its factory value.
-- **CA** (OSD lock): check that DDC/CI writes still work while the OSD is locked, then unlock (write 2). MCCS and some vendors disagree on what 1 and 2 mean; trust the read-back and the screen.
+- **CA** (OSD lock): `glim` refuses `set CA …` without `--force`, although this tier is otherwise reversible. Check that DDC/CI writes still work while the OSD is locked, then unlock (write 2). MCCS and some vendors disagree on what 1 and 2 mean; trust the read-back and the screen.
 - **86** (scaling) often does nothing at the native resolution. Test it again at a non-native mode if it matters.
 - **62** (volume): find out first whether the speakers are a USB device ([phase 5](05-beyond-ddc.md)). If they are, DDC/CI volume may be a read-only mirror.
 
