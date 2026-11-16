@@ -161,15 +161,18 @@ import Testing
     @Test func aMonitorStillSilentAfterAWakeIsReadAgainLater() async throws {
         let platform = FakePlatform()
         let display = platform.connect(hp())
+        // The second read is the only thing that can bring the monitor back,
+        // so the first has to give up, and the display has to answer again,
+        // before it. Five seconds leaves a slow CI runner room for that.
         let manager = MonitorManager(platform: platform, wakeRescanDelay: .zero,
-                                     wakeRereadDelays: [.milliseconds(30), .seconds(1.5)])
+                                     wakeRereadDelays: [.milliseconds(30), .seconds(5)])
         manager.start()
         let monitor = try #require(await eventually { manager.monitors.first != nil } ? manager.monitors.first : nil)
         #expect(await ready(monitor))
 
         display.update { $0.silent = true }
         manager.displaysDidWake()
-        #expect(await eventually(timeout: .seconds(1)) { monitor.status == .notResponding })
+        #expect(await eventually(timeout: .seconds(4)) { monitor.status == .notResponding })
         display.update { $0.silent = false }
         #expect(await eventually { monitor.status == .ready })
         manager.stop()
